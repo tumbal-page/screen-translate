@@ -52,7 +52,7 @@ class ScreenTranslatorService : Service() {
         super.onCreate()
         handler = Handler(Looper.getMainLooper())
         createNotificationChannel()
-        // Immediately start the service in the foreground to meet Android requirements
+        
         startForeground(1, buildNotification())
         setupMlKitClients()
         setupOverlay()
@@ -74,26 +74,22 @@ class ScreenTranslatorService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         stopProjection()
-        // Do not close shared translator or recognizer here to allow reuse across service restarts
         removeOverlay()
         handler?.removeCallbacksAndMessages(null)
     }
 
     private fun setupMlKitClients() {
-        // Initialize shared translator if it hasn't been created yet
         if (sharedTranslator == null) {
             val options = TranslatorOptions.Builder()
                 .setSourceLanguage(TranslateLanguage.ENGLISH)
                 .setTargetLanguage(TranslateLanguage.INDONESIAN)
                 .build()
             val client = Translation.getClient(options)
-            // Download the translation model only once
             client.downloadModelIfNeeded()
             sharedTranslator = client
         }
         translator = sharedTranslator!!
 
-        // Initialize shared recognizer if not yet created
         if (sharedRecognizer == null) {
             sharedRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
         }
