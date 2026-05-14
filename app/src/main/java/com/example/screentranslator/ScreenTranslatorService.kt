@@ -52,6 +52,8 @@ class ScreenTranslatorService : Service() {
         super.onCreate()
         handler = Handler(Looper.getMainLooper())
         createNotificationChannel()
+        // Immediately start the service in the foreground to meet Android requirements
+        startForeground(1, buildNotification())
         setupMlKitClients()
         setupOverlay()
     }
@@ -63,7 +65,6 @@ class ScreenTranslatorService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        startForeground(1, buildNotification())
         startProjection(resultCode, data)
         return START_STICKY
     }
@@ -73,24 +74,30 @@ class ScreenTranslatorService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         stopProjection()
-        translator.close()
-        recognizer.close()
+        // Do not close shared translator or recognizer here to allow reuse across service restarts
         removeOverlay()
         handler?.removeCallbacksAndMessages(null)
     }
 
     private fun setupMlKitClients() {
-        
-        val options = TranslatorOptions.Builder()
-            .setSourceLanguage(TranslateLanguage.ENGLISH)
-            .setTargetLanguage(TranslateLanguage.INDONESIAN)
-            .build()
-        translator = Translation.getClient(options)
-        
-        translator.downloadModelIfNeeded()
+        // Initialize shared translator if it hasn't been created yet
+        if (sharedTranslator == null) {
+            val options = TranslatorOptions.Builder()
+                .setSourceLanguage(TranslateLanguage.ENGLISH)
+                .setTargetLanguage(TranslateLanguage.INDONESIAN)
+                .build()
+            val client = Translation.getClient(options)
+            // Download the translation model only once
+            client.downloadModelIfNeeded()
+            sharedTranslator = client
+        }
+        translator = sharedTranslator!!
 
-        
-        recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+        // Initialize shared recognizer if not yet created
+        if (sharedRecognizer == null) {
+            sharedRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+        }
+        recognizer = sharedRecognizer!!
     }
 
     private fun setupOverlay() {
@@ -245,5 +252,11 @@ class ScreenTranslatorService : Service() {
         const val EXTRA_RESULT_CODE = "resultCode"
         const val EXTRA_RESULT_DATA = "resultData"
         private const val CHANNEL_ID = "screen_translator"
+
+        @Volatile
+        private var sharedTranslator: Translator? = null
+
+        @Volatile
+        private var sharedRecognizer: TextRecognizer? = null
     }
 }
