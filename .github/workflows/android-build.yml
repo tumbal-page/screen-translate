@@ -17,8 +17,6 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
       - name: Set up compatible Gradle version
-        # Gradle provided by the runner (9.x) is not compatible with Android Gradle Plugin 8.0.2
-        # Use gradle-build-action to provide Gradle 8.0.x
         uses: gradle/gradle-build-action@v2
         with:
           gradle-version: '8.0'
@@ -32,7 +30,6 @@ jobs:
           restore-keys: ${{ runner.os }}-gradle
       - name: Build Debug APK
         run: |
-          # Use gradlew if available, otherwise fallback to system gradle
           if [ -f ./gradlew ]; then
             chmod +x ./gradlew
             ./gradlew assembleDebug --stacktrace
@@ -41,7 +38,6 @@ jobs:
           fi
         working-directory: .
       - name: Upload APK artifact
-        # actions/upload-artifact v3 is deprecated; use v4
         uses: actions/upload-artifact@v4
         with:
           name: manga-screen-translator-apk

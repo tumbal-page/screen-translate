@@ -8,11 +8,7 @@ import android.graphics.Rect
 import android.util.AttributeSet
 import android.view.View
 
-/**
- * OverlayView draws translated text over the corresponding bounding boxes. It
- * does not intercept touches (handled by WindowManager flags). Each Box
- * contains a rectangle and a translation string.
- */
+
 class OverlayView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
@@ -32,9 +28,7 @@ class OverlayView @JvmOverloads constructor(
         isAntiAlias = true
     }
 
-    /**
-     * Replaces current boxes with new set and redraws overlay.
-     */
+    
     fun updateBoxes(newBoxes: List<Box>) {
         synchronized(boxes) {
             boxes.clear()
@@ -45,16 +39,16 @@ class OverlayView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        // Draw each translated box
+        
         synchronized(boxes) {
             for (box in boxes) {
-                // Draw semi-transparent background behind the text
+                
                 canvas.drawRect(box.rect, rectPaint)
-                // Draw translation text inside the bounding box, wrapping if necessary
+                
                 drawMultilineText(box.translation, box.rect.left.toFloat(), box.rect.top.toFloat(), box.rect.right - box.rect.left, canvas)
             }
         }
-        // Draw service active indicator in top-left corner
+        
         val indicatorText = "ON"
         val indicatorPaint = Paint().apply {
             color = Color.GREEN
@@ -65,11 +59,7 @@ class OverlayView @JvmOverloads constructor(
         canvas.drawText(indicatorText, 10f, 50f, indicatorPaint)
     }
 
-    /**
-     * Draws multi-line text within a maximum width. Splits the translation if
-     * necessary. This is a naive implementation; in production use, consider
-     * TextLayout for better alignment and internationalization.
-     */
+    
     private fun drawMultilineText(text: String, x: Float, y: Float, maxWidth: Int, canvas: Canvas) {
         val words = text.split(" ")
         var line = StringBuilder()
@@ -78,7 +68,6 @@ class OverlayView @JvmOverloads constructor(
             val testLine = if (line.isEmpty()) word else "${'$'}{line} ${'$'}word"
             val testWidth = textPaint.measureText(testLine)
             if (testWidth > maxWidth) {
-                // draw the current line and start a new one
                 canvas.drawText(line.toString(), x, offsetY, textPaint)
                 line = StringBuilder(word)
                 offsetY += textPaint.textSize * 1.2f
@@ -87,7 +76,6 @@ class OverlayView @JvmOverloads constructor(
                 line.append(word)
             }
         }
-        // draw remaining line
         canvas.drawText(line.toString(), x, offsetY, textPaint)
     }
 }

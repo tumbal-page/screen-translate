@@ -19,7 +19,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.util.Log
 import android.view.Display
-import android.view.DisplayManager
+import android.hardware.display.DisplayManager
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import com.google.android.gms.tasks.OnFailureListener
@@ -37,13 +37,7 @@ import com.google.mlkit.nl.translate.Translation
 import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 
-/**
- * ScreenTranslatorService uses MediaProjection to capture the screen, recognizes
- * English text with ML Kit, translates it to Indonesian, and draws translated
- * text in an overlay. This service runs in the foreground to avoid being
- * killed by the OS. This implementation is simplified for demonstration and
- * may require further optimization for production use.
- */
+
 class ScreenTranslatorService : Service() {
 
     private var mediaProjection: MediaProjection? = null
@@ -86,21 +80,21 @@ class ScreenTranslatorService : Service() {
     }
 
     private fun setupMlKitClients() {
-        // Prepare translation client for English -> Indonesian
+        
         val options = TranslatorOptions.Builder()
             .setSourceLanguage(TranslateLanguage.ENGLISH)
             .setTargetLanguage(TranslateLanguage.INDONESIAN)
             .build()
         translator = Translation.getClient(options)
-        // Download model asynchronously
+        
         translator.downloadModelIfNeeded()
 
-        // Prepare text recognizer for Latin script (good for English)
+        
         recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     }
 
     private fun setupOverlay() {
-        // Initialize overlay view and attach it to WindowManager
+        
         overlayView = OverlayView(this)
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -145,7 +139,7 @@ class ScreenTranslatorService : Service() {
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
             imageReader!!.surface, null, handler
         )
-        // Set a listener to receive image frames
+        
         imageReader!!.setOnImageAvailableListener({ reader ->
             val image: Image? = reader.acquireLatestImage()
             if (image != null) {
@@ -161,11 +155,7 @@ class ScreenTranslatorService : Service() {
         mediaProjection = null
     }
 
-    /**
-     * Converts the captured Image into a Bitmap and runs recognition and
-     * translation on it. Translations are cached to minimize duplicate
-     * translations.
-     */
+    
     private fun processFrame(image: Image) {
         val bitmap = imageToBitmap(image) ?: return
         val inputImage = InputImage.fromBitmap(bitmap, 0)
@@ -176,7 +166,7 @@ class ScreenTranslatorService : Service() {
 
     private fun handleTextBlocks(result: Text) {
         val boxTranslations = mutableListOf<OverlayView.Box>()
-        // Iterate over each line for better granularity
+        
         for (block in result.textBlocks) {
             for (line in block.lines) {
                 val boundingBox = line.boundingBox
@@ -199,17 +189,13 @@ class ScreenTranslatorService : Service() {
                 }
             }
         }
-        // If we added any translations synchronously (from cache), update overlay
+        
         if (boxTranslations.isNotEmpty()) {
             overlayView?.updateBoxes(boxTranslations)
         }
     }
 
-    /**
-     * Converts an RGBA_8888 Image into a Bitmap. Returns null if conversion
-     * fails. Note: For production use, more efficient conversion should be
-     * implemented. This method assumes all planes share the same pixel stride.
-     */
+    
     private fun imageToBitmap(image: Image): Bitmap? {
         return try {
             val width = image.width
@@ -224,7 +210,7 @@ class ScreenTranslatorService : Service() {
                 Bitmap.Config.ARGB_8888
             )
             bitmap.copyPixelsFromBuffer(buffer)
-            // Crop out padding to get the actual size
+            
             Bitmap.createBitmap(bitmap, 0, 0, width, height)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to convert image", e)
