@@ -4,6 +4,8 @@ plugins {
 }
 
 android {
+    // Specify namespace explicitly for AGP 8.0+. This should match the package name in AndroidManifest.xml
+    namespace 'com.example.screentranslator'
     compileSdk = 34
 
     defaultConfig {
