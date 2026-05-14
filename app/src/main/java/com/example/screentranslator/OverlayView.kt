@@ -57,6 +57,8 @@ class OverlayView @JvmOverloads constructor(
             style = Paint.Style.FILL
         }
         canvas.drawText(indicatorText, 10f, 50f, indicatorPaint)
+
+        postInvalidateOnAnimation()
     }
 
     
