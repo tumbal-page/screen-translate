@@ -19,7 +19,6 @@ import android.os.Looper
 import android.util.Log
 import android.hardware.display.DisplayManager
 import android.view.WindowManager
-import android.view.WindowMetrics
 import androidx.core.app.NotificationCompat
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
@@ -32,7 +31,6 @@ import com.google.mlkit.nl.translate.TranslatorOptions
 import com.google.mlkit.nl.translate.Translation
 import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicBoolean
 
 
 class ScreenTranslatorService : Service() {
@@ -44,19 +42,14 @@ class ScreenTranslatorService : Service() {
     private var translator: Translator? = null
     private lateinit var recognizer: TextRecognizer
     private val translationCache = ConcurrentHashMap<String, String>()
-    private val isTranslatorReady = AtomicBoolean(false)
-
-    // Simpan projection data sampai translator siap
-    private var pendingResultCode: Int = -1
-    private var pendingData: Intent? = null
 
     override fun onCreate() {
         super.onCreate()
         handler = Handler(Looper.getMainLooper())
         createNotificationChannel()
-        // Tanpa type dulu — type mediaProjection di-set di onStartCommand setelah user grant
         startForeground(1, buildNotification())
         setupRecognizer()
+        setupTranslator()
         setupOverlay()
     }
 
@@ -68,7 +61,7 @@ class ScreenTranslatorService : Service() {
             return START_NOT_STICKY
         }
 
-        // Set type mediaProjection setelah dapat hasil grant dari user
+        // Update type ke mediaProjection setelah dapat token dari user
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
                 1, buildNotification(),
@@ -76,10 +69,8 @@ class ScreenTranslatorService : Service() {
             )
         }
 
-        // Simpan dulu, tunggu translator siap
-        pendingResultCode = resultCode
-        pendingData = data
-        setupTranslatorThenProject()
+        // Langsung konsumsi token — tidak boleh ada delay apapun
+        startProjection(resultCode, data)
 
         return START_STICKY
     }
@@ -90,41 +81,21 @@ class ScreenTranslatorService : Service() {
         super.onDestroy()
         stopProjection()
         removeOverlay()
+        translator?.close()
         handler?.removeCallbacksAndMessages(null)
     }
 
     private fun setupRecognizer() {
-        if (sharedRecognizer == null) {
-            sharedRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-        }
-        recognizer = sharedRecognizer!!
+        recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     }
 
-    // FIX 1: Tunggu download selesai sebelum mulai projection
-    private fun setupTranslatorThenProject() {
+    private fun setupTranslator() {
+        // Model sudah didownload di MainActivity — tinggal init client
         val options = TranslatorOptions.Builder()
             .setSourceLanguage(TranslateLanguage.ENGLISH)
             .setTargetLanguage(TranslateLanguage.INDONESIAN)
             .build()
-        val client = Translation.getClient(options)
-
-        client.downloadModelIfNeeded()
-            .addOnSuccessListener {
-                Log.d(TAG, "Translator model ready")
-                translator = client
-                sharedTranslator = client
-                isTranslatorReady.set(true)
-                // Baru mulai projection setelah model siap
-                val rc = pendingResultCode
-                val d = pendingData
-                if (rc != -1 && d != null) {
-                    startProjection(rc, d)
-                }
-            }
-            .addOnFailureListener { e ->
-                Log.e(TAG, "Model download failed", e)
-                stopSelf()
-            }
+        translator = Translation.getClient(options)
     }
 
     private fun setupOverlay() {
@@ -165,7 +136,7 @@ class ScreenTranslatorService : Service() {
             getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         mediaProjection = projectionManager.getMediaProjection(resultCode, data)
 
-        // WAJIB di Android 14+ — tanpa ini sistem langsung kill service
+        // Wajib register callback sebelum createVirtualDisplay di Android 14+
         mediaProjection?.registerCallback(object : MediaProjection.Callback() {
             override fun onStop() {
                 Log.d(TAG, "MediaProjection stopped by system")
@@ -173,7 +144,6 @@ class ScreenTranslatorService : Service() {
             }
         }, handler)
 
-        // FIX 2: Tidak pakai wm.defaultDisplay yang deprecated di Android 13+
         val metrics = resources.displayMetrics
         val width = metrics.widthPixels
         val height = metrics.heightPixels
@@ -206,10 +176,9 @@ class ScreenTranslatorService : Service() {
         val inputImage = InputImage.fromBitmap(bitmap, 0)
         recognizer.process(inputImage)
             .addOnSuccessListener { text: Text -> handleTextBlocks(text) }
-            .addOnFailureListener { e: Exception -> Log.e(TAG, "Recognition failed", e) }
+            .addOnFailureListener { e -> Log.e(TAG, "Recognition failed", e) }
     }
 
-    // FIX 3: Race condition — pakai list terpisah per async callback
     private fun handleTextBlocks(result: Text) {
         val t = translator ?: return
         val lines = result.textBlocks
@@ -242,7 +211,6 @@ class ScreenTranslatorService : Service() {
                     }
                     .addOnFailureListener { e ->
                         Log.e(TAG, "Translation failed for: $text", e)
-                        // Tetap update overlay walau sebagian gagal
                         collectedBoxes[index] = OverlayView.Box(boundingBox, text)
                         if (collectedBoxes.size == totalLines) {
                             overlayView?.updateBoxes(collectedBoxes.values.toList())
@@ -300,11 +268,5 @@ class ScreenTranslatorService : Service() {
         const val EXTRA_RESULT_CODE = "resultCode"
         const val EXTRA_RESULT_DATA = "resultData"
         private const val CHANNEL_ID = "screen_translator"
-
-        @Volatile
-        private var sharedTranslator: Translator? = null
-
-        @Volatile
-        private var sharedRecognizer: TextRecognizer? = null
     }
 }
