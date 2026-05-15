@@ -54,14 +54,8 @@ class ScreenTranslatorService : Service() {
         super.onCreate()
         handler = Handler(Looper.getMainLooper())
         createNotificationChannel()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                1, buildNotification(),
-                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-            )
-        } else {
-            startForeground(1, buildNotification())
-        }
+        // Tanpa type dulu — type mediaProjection di-set di onStartCommand setelah user grant
+        startForeground(1, buildNotification())
         setupRecognizer()
         setupOverlay()
     }
@@ -72,6 +66,14 @@ class ScreenTranslatorService : Service() {
         if (resultCode == -1 || data == null) {
             stopSelf()
             return START_NOT_STICKY
+        }
+
+        // Set type mediaProjection setelah dapat hasil grant dari user
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                1, buildNotification(),
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            )
         }
 
         // Simpan dulu, tunggu translator siap
