@@ -54,7 +54,14 @@ class ScreenTranslatorService : Service() {
         super.onCreate()
         handler = Handler(Looper.getMainLooper())
         createNotificationChannel()
-        startForeground(1, buildNotification())
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                1, buildNotification(),
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            )
+        } else {
+            startForeground(1, buildNotification())
+        }
         setupRecognizer()
         setupOverlay()
     }
