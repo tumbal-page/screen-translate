@@ -6,6 +6,8 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.view.View
 import android.widget.Button
@@ -19,7 +21,6 @@ import com.google.mlkit.nl.translate.TranslateLanguage
 import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.TranslatorOptions
 
-
 class MainActivity : AppCompatActivity() {
 
     companion object {
@@ -29,31 +30,26 @@ class MainActivity : AppCompatActivity() {
     private lateinit var downloadButton: Button
     private lateinit var startButton: Button
     private lateinit var statusText: TextView
-
-    // Simpan token MediaProjection segera setelah user grant
-    private var pendingResultCode: Int = -1
-    private var pendingData: Intent? = null
+    private val handler = Handler(Looper.getMainLooper())
 
     private val requestScreenCapture =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result: ActivityResult ->
             val resultCode = result.resultCode
             val data: Intent? = result.data
             if (resultCode == Activity.RESULT_OK && data != null) {
-                // Simpan token dan langsung start service — jangan tunda
-                val serviceIntent = Intent(this, ScreenTranslatorService::class.java)
-                serviceIntent.putExtra(ScreenTranslatorService.EXTRA_RESULT_CODE, resultCode)
-                serviceIntent.putExtra(ScreenTranslatorService.EXTRA_RESULT_DATA, data)
+                // Langsung start CaptureService dengan token — tidak ada delay
+                val serviceIntent = Intent(this, CaptureService::class.java)
+                serviceIntent.putExtra(CaptureService.EXTRA_RESULT_CODE, resultCode)
+                serviceIntent.putExtra(CaptureService.EXTRA_RESULT_DATA, data)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     startForegroundService(serviceIntent)
                 } else {
                     startService(serviceIntent)
                 }
             } else {
-                Toast.makeText(
-                    this,
-                    "Screen capture permission denied. Cannot start translator.",
-                    Toast.LENGTH_LONG
-                ).show()
+                Toast.makeText(this, "Screen capture permission denied.", Toast.LENGTH_LONG).show()
+                // Stop OverlayService juga kalau capture ditolak
+                stopService(Intent(this, OverlayService::class.java))
             }
         }
 
@@ -65,15 +61,9 @@ class MainActivity : AppCompatActivity() {
         startButton = findViewById(R.id.startButton)
         statusText = findViewById(R.id.statusText)
 
-        downloadButton.setOnClickListener {
-            startDownload()
-        }
+        downloadButton.setOnClickListener { startDownload() }
+        startButton.setOnClickListener { maybeStartTranslator() }
 
-        startButton.setOnClickListener {
-            maybeStartTranslator()
-        }
-
-        // Cek model setiap kali app dibuka
         checkModelAvailability()
     }
 
@@ -88,11 +78,10 @@ class MainActivity : AppCompatActivity() {
             .build()
         val translator = Translation.getClient(options)
 
-        // Coba translate teks dummy — kalau sukses berarti model ada
         translator.translate("test")
             .addOnSuccessListener {
                 translator.close()
-                statusText.text = "Model ready"
+                statusText.text = "Model ready ✓"
                 downloadButton.visibility = View.GONE
                 startButton.visibility = View.VISIBLE
             }
@@ -117,7 +106,7 @@ class MainActivity : AppCompatActivity() {
         translator.downloadModelIfNeeded()
             .addOnSuccessListener {
                 translator.close()
-                statusText.text = "Model ready"
+                statusText.text = "Model ready ✓"
                 downloadButton.visibility = View.GONE
                 startButton.visibility = View.VISIBLE
                 downloadButton.isEnabled = true
@@ -131,35 +120,44 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun maybeStartTranslator() {
-        if (!ensureNotificationPermission()) {
-            return
-        }
+        if (!ensureNotificationPermission()) return
 
         if (!Settings.canDrawOverlays(this)) {
-            val intent = Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:$packageName")
-            )
             Toast.makeText(
                 this,
                 "Allow overlay permission then return to start translator",
                 Toast.LENGTH_LONG
             ).show()
-            startActivity(intent)
+            startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:$packageName")
+                )
+            )
             return
         }
 
-        // Langsung minta screen capture — tidak ada delay apapun setelah ini
+        // Step 1: Start OverlayService dulu — overlay harus visible sebelum MediaProjection
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(Intent(this, OverlayService::class.java))
+        } else {
+            startService(Intent(this, OverlayService::class.java))
+        }
+
+        // Step 2: Tunggu overlay visible (~500ms), baru request screen capture
+        handler.postDelayed({
+            requestScreenCapturePermission()
+        }, 500)
+    }
+
+    private fun requestScreenCapturePermission() {
         val projectionManager =
             getSystemService(Context.MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
-        val captureIntent = projectionManager.createScreenCaptureIntent()
-        requestScreenCapture.launch(captureIntent)
+        requestScreenCapture.launch(projectionManager.createScreenCaptureIntent())
     }
 
     private fun ensureNotificationPermission(): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            return true
-        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
         return if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
             true
         } else {
@@ -177,26 +175,16 @@ class MainActivity : AppCompatActivity() {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != REQUEST_CODE_POST_NOTIFICATIONS) {
-            return
-        }
-        if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            maybeStartTranslator()
-        } else {
-            Toast.makeText(
-                this,
-                "Notification permission is required to show the translator service status.",
-                Toast.LENGTH_LONG
-            ).show()
-        }
-    }
-
-    override fun onResume() {
-        super.onResume()
-        // Cek ulang overlay permission setiap kembali ke app
-        // (user mungkin baru saja grant dari settings)
-        if (startButton.visibility == View.VISIBLE || downloadButton.visibility == View.GONE) {
-            // Model sudah ready, tidak perlu re-check
+        if (requestCode == REQUEST_CODE_POST_NOTIFICATIONS) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                maybeStartTranslator()
+            } else {
+                Toast.makeText(
+                    this,
+                    "Notification permission is required.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
         }
     }
 }
