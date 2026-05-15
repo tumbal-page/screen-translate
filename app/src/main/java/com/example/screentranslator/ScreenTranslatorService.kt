@@ -8,7 +8,6 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
-import android.graphics.Rect
 import android.media.Image
 import android.media.ImageReader
 import android.media.projection.MediaProjection
@@ -18,13 +17,10 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
-import android.view.Display
 import android.hardware.display.DisplayManager
 import android.view.WindowManager
+import android.view.WindowMetrics
 import androidx.core.app.NotificationCompat
-import com.google.android.gms.tasks.OnFailureListener
-import com.google.android.gms.tasks.OnSuccessListener
-import com.google.android.gms.tasks.Task
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
@@ -36,6 +32,7 @@ import com.google.mlkit.nl.translate.TranslatorOptions
 import com.google.mlkit.nl.translate.Translation
 import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 
 class ScreenTranslatorService : Service() {
@@ -44,17 +41,21 @@ class ScreenTranslatorService : Service() {
     private var imageReader: ImageReader? = null
     private var handler: Handler? = null
     private var overlayView: OverlayView? = null
-    private lateinit var translator: Translator
+    private var translator: Translator? = null
     private lateinit var recognizer: TextRecognizer
     private val translationCache = ConcurrentHashMap<String, String>()
+    private val isTranslatorReady = AtomicBoolean(false)
+
+    // Simpan projection data sampai translator siap
+    private var pendingResultCode: Int = -1
+    private var pendingData: Intent? = null
 
     override fun onCreate() {
         super.onCreate()
         handler = Handler(Looper.getMainLooper())
         createNotificationChannel()
-        
         startForeground(1, buildNotification())
-        setupMlKitClients()
+        setupRecognizer()
         setupOverlay()
     }
 
@@ -65,7 +66,12 @@ class ScreenTranslatorService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        startProjection(resultCode, data)
+
+        // Simpan dulu, tunggu translator siap
+        pendingResultCode = resultCode
+        pendingData = data
+        setupTranslatorThenProject()
+
         return START_STICKY
     }
 
@@ -78,26 +84,41 @@ class ScreenTranslatorService : Service() {
         handler?.removeCallbacksAndMessages(null)
     }
 
-    private fun setupMlKitClients() {
-        if (sharedTranslator == null) {
-            val options = TranslatorOptions.Builder()
-                .setSourceLanguage(TranslateLanguage.ENGLISH)
-                .setTargetLanguage(TranslateLanguage.INDONESIAN)
-                .build()
-            val client = Translation.getClient(options)
-            client.downloadModelIfNeeded()
-            sharedTranslator = client
-        }
-        translator = sharedTranslator!!
-
+    private fun setupRecognizer() {
         if (sharedRecognizer == null) {
             sharedRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
         }
         recognizer = sharedRecognizer!!
     }
 
+    // FIX 1: Tunggu download selesai sebelum mulai projection
+    private fun setupTranslatorThenProject() {
+        val options = TranslatorOptions.Builder()
+            .setSourceLanguage(TranslateLanguage.ENGLISH)
+            .setTargetLanguage(TranslateLanguage.INDONESIAN)
+            .build()
+        val client = Translation.getClient(options)
+
+        client.downloadModelIfNeeded()
+            .addOnSuccessListener {
+                Log.d(TAG, "Translator model ready")
+                translator = client
+                sharedTranslator = client
+                isTranslatorReady.set(true)
+                // Baru mulai projection setelah model siap
+                val rc = pendingResultCode
+                val d = pendingData
+                if (rc != -1 && d != null) {
+                    startProjection(rc, d)
+                }
+            }
+            .addOnFailureListener { e ->
+                Log.e(TAG, "Model download failed", e)
+                stopSelf()
+            }
+    }
+
     private fun setupOverlay() {
-        
         overlayView = OverlayView(this)
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -121,7 +142,11 @@ class ScreenTranslatorService : Service() {
     private fun removeOverlay() {
         val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         overlayView?.let {
-            wm.removeView(it)
+            try {
+                wm.removeView(it)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to remove overlay", e)
+            }
         }
         overlayView = null
     }
@@ -130,19 +155,20 @@ class ScreenTranslatorService : Service() {
         val projectionManager =
             getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         mediaProjection = projectionManager.getMediaProjection(resultCode, data)
-        val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        val display: Display = wm.defaultDisplay
+
+        // FIX 2: Tidak pakai wm.defaultDisplay yang deprecated di Android 13+
         val metrics = resources.displayMetrics
         val width = metrics.widthPixels
         val height = metrics.heightPixels
         val dpi = metrics.densityDpi
+
         imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
         mediaProjection?.createVirtualDisplay(
             "ScreenTranslator", width, height, dpi,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
             imageReader!!.surface, null, handler
         )
-        
+
         imageReader!!.setOnImageAvailableListener({ reader ->
             val image: Image? = reader.acquireLatestImage()
             if (image != null) {
@@ -158,7 +184,6 @@ class ScreenTranslatorService : Service() {
         mediaProjection = null
     }
 
-    
     private fun processFrame(image: Image) {
         val bitmap = imageToBitmap(image) ?: return
         val inputImage = InputImage.fromBitmap(bitmap, 0)
@@ -167,38 +192,49 @@ class ScreenTranslatorService : Service() {
             .addOnFailureListener { e: Exception -> Log.e(TAG, "Recognition failed", e) }
     }
 
+    // FIX 3: Race condition — pakai list terpisah per async callback
     private fun handleTextBlocks(result: Text) {
-        val boxTranslations = mutableListOf<OverlayView.Box>()
-        
-        for (block in result.textBlocks) {
-            for (line in block.lines) {
-                val boundingBox = line.boundingBox
-                val text = line.text.trim()
-                if (boundingBox != null && text.isNotEmpty()) {
-                    val cached = translationCache[text]
-                    if (cached != null) {
-                        boxTranslations.add(OverlayView.Box(boundingBox, cached))
-                    } else {
-                        translator.translate(text)
-                            .addOnSuccessListener { translated: String ->
-                                translationCache[text] = translated
-                                boxTranslations.add(OverlayView.Box(boundingBox, translated))
-                                overlayView?.updateBoxes(boxTranslations)
-                            }
-                            .addOnFailureListener { e ->
-                                Log.e(TAG, "Translation failed", e)
-                            }
-                    }
+        val t = translator ?: return
+        val lines = result.textBlocks
+            .flatMap { it.lines }
+            .filter { it.boundingBox != null && it.text.trim().isNotEmpty() }
+
+        if (lines.isEmpty()) return
+
+        val totalLines = lines.size
+        val collectedBoxes = ConcurrentHashMap<Int, OverlayView.Box>()
+
+        lines.forEachIndexed { index, line ->
+            val boundingBox = line.boundingBox!!
+            val text = line.text.trim()
+            val cached = translationCache[text]
+
+            if (cached != null) {
+                collectedBoxes[index] = OverlayView.Box(boundingBox, cached)
+                if (collectedBoxes.size == totalLines) {
+                    overlayView?.updateBoxes(collectedBoxes.values.toList())
                 }
+            } else {
+                t.translate(text)
+                    .addOnSuccessListener { translated ->
+                        translationCache[text] = translated
+                        collectedBoxes[index] = OverlayView.Box(boundingBox, translated)
+                        if (collectedBoxes.size == totalLines) {
+                            overlayView?.updateBoxes(collectedBoxes.values.toList())
+                        }
+                    }
+                    .addOnFailureListener { e ->
+                        Log.e(TAG, "Translation failed for: $text", e)
+                        // Tetap update overlay walau sebagian gagal
+                        collectedBoxes[index] = OverlayView.Box(boundingBox, text)
+                        if (collectedBoxes.size == totalLines) {
+                            overlayView?.updateBoxes(collectedBoxes.values.toList())
+                        }
+                    }
             }
-        }
-        
-        if (boxTranslations.isNotEmpty()) {
-            overlayView?.updateBoxes(boxTranslations)
         }
     }
 
-    
     private fun imageToBitmap(image: Image): Bitmap? {
         return try {
             val width = image.width
@@ -213,7 +249,6 @@ class ScreenTranslatorService : Service() {
                 Bitmap.Config.ARGB_8888
             )
             bitmap.copyPixelsFromBuffer(buffer)
-            
             Bitmap.createBitmap(bitmap, 0, 0, width, height)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to convert image", e)
@@ -235,12 +270,12 @@ class ScreenTranslatorService : Service() {
     }
 
     private fun buildNotification(): Notification {
-        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+        return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Manga Screen Translator")
             .setContentText("Service is running")
             .setSmallIcon(android.R.drawable.ic_menu_info_details)
             .setOngoing(true)
-        return builder.build()
+            .build()
     }
 
     companion object {
