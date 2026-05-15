@@ -31,6 +31,7 @@ import com.google.mlkit.nl.translate.TranslatorOptions
 import com.google.mlkit.nl.translate.Translation
 import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 
 class ScreenTranslatorService : Service() {
@@ -42,6 +43,7 @@ class ScreenTranslatorService : Service() {
     private var translator: Translator? = null
     private lateinit var recognizer: TextRecognizer
     private val translationCache = ConcurrentHashMap<String, String>()
+    private val isPlaying = AtomicBoolean(true)
 
     override fun onCreate() {
         super.onCreate()
@@ -61,7 +63,6 @@ class ScreenTranslatorService : Service() {
             return START_NOT_STICKY
         }
 
-        // Update type ke mediaProjection setelah dapat token dari user
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
                 1, buildNotification(),
@@ -69,9 +70,7 @@ class ScreenTranslatorService : Service() {
             )
         }
 
-        // Langsung konsumsi token — tidak boleh ada delay apapun
         startProjection(resultCode, data)
-
         return START_STICKY
     }
 
@@ -90,7 +89,6 @@ class ScreenTranslatorService : Service() {
     }
 
     private fun setupTranslator() {
-        // Model sudah didownload di MainActivity — tinggal init client
         val options = TranslatorOptions.Builder()
             .setSourceLanguage(TranslateLanguage.ENGLISH)
             .setTargetLanguage(TranslateLanguage.INDONESIAN)
@@ -100,21 +98,36 @@ class ScreenTranslatorService : Service() {
 
     private fun setupOverlay() {
         overlayView = OverlayView(this)
+
+        // Callback play/pause dari bubble
+        overlayView?.onPlayPause = { playing ->
+            isPlaying.set(playing)
+            Log.d(TAG, "Translator ${if (playing) "resumed" else "paused"}")
+        }
+
+        // Callback stop dari bubble
+        overlayView?.onStop = {
+            Log.d(TAG, "Stop requested from overlay")
+            stopSelf()
+        }
+
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         } else {
             @Suppress("DEPRECATION")
             WindowManager.LayoutParams.TYPE_PHONE
         }
+
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
             type,
+            // Hapus FLAG_NOT_TOUCHABLE — overlay sekarang interaktif
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         )
+
         val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         wm.addView(overlayView, params)
     }
@@ -136,7 +149,6 @@ class ScreenTranslatorService : Service() {
             getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         mediaProjection = projectionManager.getMediaProjection(resultCode, data)
 
-        // Wajib register callback sebelum createVirtualDisplay di Android 14+
         mediaProjection?.registerCallback(object : MediaProjection.Callback() {
             override fun onStop() {
                 Log.d(TAG, "MediaProjection stopped by system")
@@ -159,7 +171,10 @@ class ScreenTranslatorService : Service() {
         imageReader!!.setOnImageAvailableListener({ reader ->
             val image: Image? = reader.acquireLatestImage()
             if (image != null) {
-                processFrame(image)
+                // Hanya proses frame kalau sedang playing
+                if (isPlaying.get()) {
+                    processFrame(image)
+                }
                 image.close()
             }
         }, handler)
