@@ -156,6 +156,14 @@ class ScreenTranslatorService : Service() {
             getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         mediaProjection = projectionManager.getMediaProjection(resultCode, data)
 
+        // WAJIB di Android 14+ — tanpa ini sistem langsung kill service
+        mediaProjection?.registerCallback(object : MediaProjection.Callback() {
+            override fun onStop() {
+                Log.d(TAG, "MediaProjection stopped by system")
+                stopSelf()
+            }
+        }, handler)
+
         // FIX 2: Tidak pakai wm.defaultDisplay yang deprecated di Android 13+
         val metrics = resources.displayMetrics
         val width = metrics.widthPixels
