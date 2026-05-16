@@ -5,7 +5,6 @@ import android.graphics.*
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
-import android.view.WindowManager
 import kotlin.math.abs
 
 class OverlayView @JvmOverloads constructor(
@@ -91,12 +90,12 @@ class OverlayView @JvmOverloads constructor(
         textSize = 32f
     }
 
-    // Button centers (relative to bubble, calculated in draw)
+    // Button centers
     private var playBtnCx = 0f
     private var playBtnCy = 0f
     private var stopBtnCx = 0f
     private var stopBtnCy = 0f
-    private val panelRect = RectF()
+    val panelRect = RectF()
 
     fun updateBoxes(newBoxes: List<Box>) {
         synchronized(boxes) {
@@ -114,7 +113,6 @@ class OverlayView @JvmOverloads constructor(
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
 
-        // Draw translation boxes
         if (isPlaying) {
             synchronized(boxes) {
                 for (box in boxes) {
@@ -138,7 +136,6 @@ class OverlayView @JvmOverloads constructor(
     }
 
     private fun drawBubble(canvas: Canvas) {
-        // Border warna hijau saat playing, abu saat pause
         bubbleBorderPaint.color = if (isPlaying)
             Color.argb(255, 0, 200, 100)
         else
@@ -152,7 +149,6 @@ class OverlayView @JvmOverloads constructor(
     }
 
     private fun drawPanel(canvas: Canvas) {
-        // Panel posisi di sebelah kanan bubble, atau kiri kalau kepotong layar
         val screenW = width.toFloat()
         val px = if (bubbleX + bubbleRadius + panelWidth + panelPadding < screenW)
             bubbleX + bubbleRadius + panelPadding
@@ -162,62 +158,68 @@ class OverlayView @JvmOverloads constructor(
         val py = bubbleY - panelHeight / 2
         panelRect.set(px, py, px + panelWidth, py + panelHeight)
 
-        // Panel background
         canvas.drawRoundRect(panelRect, 24f, 24f, panelPaint)
         canvas.drawRoundRect(panelRect, 24f, 24f, panelBorderPaint)
 
-        // Play/Pause button
         playBtnCx = px + panelWidth * 0.33f
         playBtnCy = py + panelHeight / 2
         btnPlayPaint.color = if (isPlaying)
-            Color.argb(220, 255, 165, 0)  // orange = pause
+            Color.argb(220, 255, 165, 0)
         else
-            Color.argb(220, 0, 180, 80)   // green = play
+            Color.argb(220, 0, 180, 80)
 
         canvas.drawCircle(playBtnCx, playBtnCy, btnRadius, btnPlayPaint)
         val playLabel = if (isPlaying) "⏸" else "▶"
         canvas.drawText(playLabel, playBtnCx, playBtnCy + btnTextPaint.textSize / 3, btnTextPaint)
 
-        // Stop button
         stopBtnCx = px + panelWidth * 0.67f
         stopBtnCy = py + panelHeight / 2
         canvas.drawCircle(stopBtnCx, stopBtnCy, btnRadius, btnStopPaint)
         canvas.drawText("■", stopBtnCx, stopBtnCy + btnTextPaint.textSize / 3, btnTextPaint)
 
-        // Labels
         canvas.drawText(
             if (isPlaying) "Pause" else "Play",
             playBtnCx, playBtnCy + btnRadius + 22f, labelPaint
         )
         canvas.drawText("Stop", stopBtnCx, stopBtnCy + btnRadius + 22f, labelPaint)
 
-        // Bubble tetap kelihatan
         drawBubble(canvas)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        val x = event.x
+        val y = event.y
+
+        // Hanya consume touch kalau mengenai bubble atau panel
+        val hitBubble = isTouchOnBubble(x, y)
+        val hitPanel = isExpanded && panelRect.contains(x, y)
+
+        if (!hitBubble && !hitPanel) {
+            // Touch di luar area interaktif — teruskan ke app di bawah
+            return false
+        }
+
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
-                touchStartX = event.x
-                touchStartY = event.y
+                touchStartX = x
+                touchStartY = y
                 isDragging = false
                 return true
             }
 
             MotionEvent.ACTION_MOVE -> {
-                val dx = event.x - touchStartX
-                val dy = event.y - touchStartY
+                val dx = x - touchStartX
+                val dy = y - touchStartY
                 if (!isDragging && (abs(dx) > dragThreshold || abs(dy) > dragThreshold)) {
                     isDragging = true
                 }
                 if (isDragging && isTouchOnBubble(touchStartX, touchStartY)) {
                     bubbleX += dx
                     bubbleY += dy
-                    // Clamp ke dalam layar
                     bubbleX = bubbleX.coerceIn(bubbleRadius, width - bubbleRadius)
                     bubbleY = bubbleY.coerceIn(bubbleRadius, height - bubbleRadius)
-                    touchStartX = event.x
-                    touchStartY = event.y
+                    touchStartX = x
+                    touchStartY = y
                     postInvalidate()
                 }
                 return true
@@ -225,41 +227,36 @@ class OverlayView @JvmOverloads constructor(
 
             MotionEvent.ACTION_UP -> {
                 if (!isDragging) {
-                    handleTap(event.x, event.y)
+                    handleTap(x, y)
                 }
                 return true
             }
         }
-        return super.onTouchEvent(event)
+        return false
     }
 
     private fun handleTap(x: Float, y: Float) {
         if (isExpanded) {
             when {
-                // Tap play/pause button
                 dist(x, y, playBtnCx, playBtnCy) < btnRadius -> {
                     isPlaying = !isPlaying
                     if (!isPlaying) clearBoxes()
                     onPlayPause?.invoke(isPlaying)
                     postInvalidate()
                 }
-                // Tap stop button
                 dist(x, y, stopBtnCx, stopBtnCy) < btnRadius -> {
                     onStop?.invoke()
                 }
-                // Tap bubble → collapse panel
                 isTouchOnBubble(x, y) -> {
                     isExpanded = false
                     postInvalidate()
                 }
-                // Tap outside panel → collapse
                 !panelRect.contains(x, y) -> {
                     isExpanded = false
                     postInvalidate()
                 }
             }
         } else {
-            // Tap bubble → expand panel
             if (isTouchOnBubble(x, y)) {
                 isExpanded = true
                 postInvalidate()
