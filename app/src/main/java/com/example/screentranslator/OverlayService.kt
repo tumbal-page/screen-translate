@@ -26,7 +26,6 @@ class OverlayService : Service() {
     private var handler: Handler? = null
     private val wm by lazy { getSystemService(Context.WINDOW_SERVICE) as WindowManager }
 
-    // Posisi bubble
     private var posX = 100
     private var posY = 300
 
@@ -47,9 +46,7 @@ class OverlayService : Service() {
                         overlayView?.updateBoxes(overlayBoxes)
                     }
                 }
-                ACTION_CLEAR_BOXES -> {
-                    overlayView?.clearBoxes()
-                }
+                ACTION_CLEAR_BOXES -> overlayView?.clearBoxes()
             }
         }
     }
@@ -70,9 +67,7 @@ class OverlayService : Service() {
         registerUpdateReceiver()
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        return START_STICKY
-    }
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -87,9 +82,9 @@ class OverlayService : Service() {
         overlayView = OverlayView(this)
 
         overlayView?.onPlayPause = { isPlaying ->
-            val intent = Intent(CaptureService.ACTION_PLAY_PAUSE)
-            intent.putExtra(CaptureService.EXTRA_IS_PLAYING, isPlaying)
-            sendBroadcast(intent)
+            val i = Intent(CaptureService.ACTION_PLAY_PAUSE)
+            i.putExtra(CaptureService.EXTRA_IS_PLAYING, isPlaying)
+            sendBroadcast(i)
             if (!isPlaying) overlayView?.clearBoxes()
         }
 
@@ -99,32 +94,31 @@ class OverlayService : Service() {
         }
 
         overlayView?.onDrag = { dx, dy ->
-            val params = overlayParams ?: return@onDrag
-            params.x += dx.toInt()
-            params.y += dy.toInt()
-
-            // Clamp ke dalam layar
-            val metrics = resources.displayMetrics
-            params.x = params.x.coerceIn(0, metrics.widthPixels - 200)
-            params.y = params.y.coerceIn(0, metrics.heightPixels - 200)
-
-            posX = params.x
-            posY = params.y
-
-            try {
-                wm.updateViewLayout(overlayView, params)
-            } catch (e: Exception) {
-                Log.e(TAG, "updateViewLayout failed", e)
+            val params = overlayParams
+            if (params != null) {
+                params.x += dx.toInt()
+                params.y += dy.toInt()
+                val metrics = resources.displayMetrics
+                params.x = params.x.coerceIn(0, metrics.widthPixels - 200)
+                params.y = params.y.coerceIn(0, metrics.heightPixels - 200)
+                posX = params.x
+                posY = params.y
+                try {
+                    wm.updateViewLayout(overlayView, params)
+                } catch (e: Exception) {
+                    Log.e(TAG, "updateViewLayout drag failed", e)
+                }
             }
         }
 
-        overlayView?.onExpandChanged = { expanded ->
-            // Update ukuran window saat panel expand/collapse
-            val params = overlayParams ?: return@onExpandChanged
-            try {
-                wm.updateViewLayout(overlayView, params)
-            } catch (e: Exception) {
-                Log.e(TAG, "updateViewLayout onExpand failed", e)
+        overlayView?.onExpandChanged = {
+            val params = overlayParams
+            if (params != null) {
+                try {
+                    wm.updateViewLayout(overlayView, params)
+                } catch (e: Exception) {
+                    Log.e(TAG, "updateViewLayout expand failed", e)
+                }
             }
         }
 
