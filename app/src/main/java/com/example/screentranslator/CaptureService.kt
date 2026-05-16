@@ -106,11 +106,6 @@ class CaptureService : Service() {
     }
 
     private fun setupRecognizer() {
-        try {
-            com.google.mlkit.common.MlKit.initialize(this)
-        } catch (e: Exception) {
-            android.util.Log.w(TAG, "MlKit init: ${e.message}")
-        }
         recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     }
 
