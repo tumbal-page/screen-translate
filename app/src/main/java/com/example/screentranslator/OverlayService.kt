@@ -15,17 +15,21 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
-import android.view.View
+import android.view.Gravity
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 
 class OverlayService : Service() {
 
     private var overlayView: OverlayView? = null
+    private var overlayParams: WindowManager.LayoutParams? = null
     private var handler: Handler? = null
     private val wm by lazy { getSystemService(Context.WINDOW_SERVICE) as WindowManager }
 
-    // Receiver untuk update boxes dari CaptureService
+    // Posisi bubble
+    private var posX = 100
+    private var posY = 300
+
     private val updateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
@@ -74,11 +78,7 @@ class OverlayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        try {
-            unregisterReceiver(updateReceiver)
-        } catch (e: Exception) {
-            Log.e(TAG, "unregister failed", e)
-        }
+        try { unregisterReceiver(updateReceiver) } catch (e: Exception) { }
         removeOverlay()
         handler?.removeCallbacksAndMessages(null)
     }
@@ -87,7 +87,6 @@ class OverlayService : Service() {
         overlayView = OverlayView(this)
 
         overlayView?.onPlayPause = { isPlaying ->
-            // Kirim ke CaptureService via broadcast
             val intent = Intent(CaptureService.ACTION_PLAY_PAUSE)
             intent.putExtra(CaptureService.EXTRA_IS_PLAYING, isPlaying)
             sendBroadcast(intent)
@@ -95,9 +94,38 @@ class OverlayService : Service() {
         }
 
         overlayView?.onStop = {
-            // Stop CaptureService dulu, lalu stop diri sendiri
             sendBroadcast(Intent(CaptureService.ACTION_STOP))
             stopSelf()
+        }
+
+        overlayView?.onDrag = { dx, dy ->
+            val params = overlayParams ?: return@onDrag
+            params.x += dx.toInt()
+            params.y += dy.toInt()
+
+            // Clamp ke dalam layar
+            val metrics = resources.displayMetrics
+            params.x = params.x.coerceIn(0, metrics.widthPixels - 200)
+            params.y = params.y.coerceIn(0, metrics.heightPixels - 200)
+
+            posX = params.x
+            posY = params.y
+
+            try {
+                wm.updateViewLayout(overlayView, params)
+            } catch (e: Exception) {
+                Log.e(TAG, "updateViewLayout failed", e)
+            }
+        }
+
+        overlayView?.onExpandChanged = { expanded ->
+            // Update ukuran window saat panel expand/collapse
+            val params = overlayParams ?: return@onExpandChanged
+            try {
+                wm.updateViewLayout(overlayView, params)
+            } catch (e: Exception) {
+                Log.e(TAG, "updateViewLayout onExpand failed", e)
+            }
         }
 
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -108,28 +136,30 @@ class OverlayService : Service() {
         }
 
         val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
             type,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
-        )
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = posX
+            y = posY
+        }
 
+        overlayParams = params
         wm.addView(overlayView, params)
-        Log.d(TAG, "Overlay added to WindowManager")
+        Log.d(TAG, "Overlay added")
     }
 
     private fun removeOverlay() {
         overlayView?.let {
-            try {
-                wm.removeView(it)
-            } catch (e: Exception) {
-                Log.e(TAG, "removeOverlay failed", e)
-            }
+            try { wm.removeView(it) } catch (e: Exception) { Log.e(TAG, "removeOverlay failed", e) }
         }
         overlayView = null
+        overlayParams = null
     }
 
     private fun registerUpdateReceiver() {
@@ -144,18 +174,12 @@ class OverlayService : Service() {
         }
     }
 
-    // Dipanggil dari MainActivity untuk cek overlay sudah visible
-    fun isOverlayVisible(): Boolean {
-        return overlayView?.windowVisibility == View.VISIBLE
-    }
-
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID, "Overlay Control", NotificationManager.IMPORTANCE_MIN
             )
-            getSystemService(NotificationManager::class.java)
-                .createNotificationChannel(channel)
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
     }
 
