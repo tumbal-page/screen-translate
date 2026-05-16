@@ -33,11 +33,12 @@
             android:stopWithTask="false"
             android:foregroundServiceType="dataSync" />
 
-        <!-- Service B: hanya MediaProjection, tidak buat overlay -->
+        <!-- Service B: hanya MediaProjection, tidak buat overlay, process terpisah -->
         <service
             android:name=".CaptureService"
             android:exported="false"
             android:stopWithTask="false"
+            android:process=":capture"
             android:foregroundServiceType="mediaProjection" />
 
     </application>

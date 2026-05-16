@@ -21,7 +21,6 @@ import android.os.IBinder
 import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.google.mlkit.nl.translate.TranslateLanguage
 import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.Translator
@@ -42,10 +41,7 @@ class CaptureService : Service() {
     private var handler: Handler? = null
     private var translator: Translator? = null
     private lateinit var recognizer: TextRecognizer
-    private lateinit var localBroadcast: LocalBroadcastManager
     private val translationCache = ConcurrentHashMap<String, String>()
-
-    // Default PAUSE — user harus klik play dulu
     private val isPlaying = AtomicBoolean(false)
 
     private val commandReceiver = object : BroadcastReceiver() {
@@ -55,7 +51,9 @@ class CaptureService : Service() {
                     val playing = intent.getBooleanExtra(EXTRA_IS_PLAYING, false)
                     isPlaying.set(playing)
                     if (!playing) {
-                        localBroadcast.sendBroadcast(Intent(OverlayService.ACTION_CLEAR_BOXES))
+                        sendBroadcast(Intent(OverlayService.ACTION_CLEAR_BOXES).apply {
+                            `package` = packageName
+                        })
                     }
                     Log.d(TAG, "PlayPause: $playing")
                 }
@@ -70,7 +68,6 @@ class CaptureService : Service() {
     override fun onCreate() {
         super.onCreate()
         handler = Handler(Looper.getMainLooper())
-        localBroadcast = LocalBroadcastManager.getInstance(this)
         createNotificationChannel()
         startForeground(NOTIF_ID, buildNotification())
         setupRecognizer()
@@ -102,7 +99,7 @@ class CaptureService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        localBroadcast.unregisterReceiver(commandReceiver)
+        try { unregisterReceiver(commandReceiver) } catch (e: Exception) { }
         stopProjection()
         translator?.close()
         handler?.removeCallbacksAndMessages(null)
@@ -125,7 +122,11 @@ class CaptureService : Service() {
             addAction(ACTION_PLAY_PAUSE)
             addAction(ACTION_STOP)
         }
-        localBroadcast.registerReceiver(commandReceiver, filter)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(commandReceiver, filter, RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(commandReceiver, filter)
+        }
     }
 
     private fun startProjection(resultCode: Int, data: Intent) {
@@ -211,12 +212,11 @@ class CaptureService : Service() {
     }
 
     private fun sendBoxesToOverlay(boxes: ConcurrentHashMap<Int, BoxData>) {
-        val intent = Intent(OverlayService.ACTION_UPDATE_BOXES)
-        intent.putParcelableArrayListExtra(
-            OverlayService.EXTRA_BOXES,
-            ArrayList(boxes.values.toList())
-        )
-        localBroadcast.sendBroadcast(intent)
+        val intent = Intent(OverlayService.ACTION_UPDATE_BOXES).apply {
+            `package` = packageName
+            putParcelableArrayListExtra(OverlayService.EXTRA_BOXES, ArrayList(boxes.values.toList()))
+        }
+        sendBroadcast(intent)
     }
 
     private fun imageToBitmap(image: Image): Bitmap? {
