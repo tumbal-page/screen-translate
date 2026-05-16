@@ -21,6 +21,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.google.mlkit.nl.translate.TranslateLanguage
 import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.Translator
@@ -41,18 +42,20 @@ class CaptureService : Service() {
     private var handler: Handler? = null
     private var translator: Translator? = null
     private lateinit var recognizer: TextRecognizer
+    private lateinit var localBroadcast: LocalBroadcastManager
     private val translationCache = ConcurrentHashMap<String, String>()
-    private val isPlaying = AtomicBoolean(true)
 
-    // Receiver untuk command dari OverlayService
+    // Default PAUSE — user harus klik play dulu
+    private val isPlaying = AtomicBoolean(false)
+
     private val commandReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
                 ACTION_PLAY_PAUSE -> {
-                    val playing = intent.getBooleanExtra(EXTRA_IS_PLAYING, true)
+                    val playing = intent.getBooleanExtra(EXTRA_IS_PLAYING, false)
                     isPlaying.set(playing)
                     if (!playing) {
-                        sendBroadcast(Intent(OverlayService.ACTION_CLEAR_BOXES))
+                        localBroadcast.sendBroadcast(Intent(OverlayService.ACTION_CLEAR_BOXES))
                     }
                     Log.d(TAG, "PlayPause: $playing")
                 }
@@ -67,8 +70,8 @@ class CaptureService : Service() {
     override fun onCreate() {
         super.onCreate()
         handler = Handler(Looper.getMainLooper())
+        localBroadcast = LocalBroadcastManager.getInstance(this)
         createNotificationChannel()
-        // Tidak ada overlay di sini sama sekali
         startForeground(NOTIF_ID, buildNotification())
         setupRecognizer()
         setupTranslator()
@@ -84,7 +87,6 @@ class CaptureService : Service() {
             return START_NOT_STICKY
         }
 
-        // Update type ke mediaProjection
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
                 NOTIF_ID, buildNotification(),
@@ -92,7 +94,6 @@ class CaptureService : Service() {
             )
         }
 
-        // Langsung konsumsi token
         startProjection(resultCode, data)
         return START_STICKY
     }
@@ -101,11 +102,7 @@ class CaptureService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        try {
-            unregisterReceiver(commandReceiver)
-        } catch (e: Exception) {
-            Log.e(TAG, "unregister failed", e)
-        }
+        localBroadcast.unregisterReceiver(commandReceiver)
         stopProjection()
         translator?.close()
         handler?.removeCallbacksAndMessages(null)
@@ -128,11 +125,7 @@ class CaptureService : Service() {
             addAction(ACTION_PLAY_PAUSE)
             addAction(ACTION_STOP)
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(commandReceiver, filter, RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(commandReceiver, filter)
-        }
+        localBroadcast.registerReceiver(commandReceiver, filter)
     }
 
     private fun startProjection(resultCode: Int, data: Intent) {
@@ -223,7 +216,7 @@ class CaptureService : Service() {
             OverlayService.EXTRA_BOXES,
             ArrayList(boxes.values.toList())
         )
-        sendBroadcast(intent)
+        localBroadcast.sendBroadcast(intent)
     }
 
     private fun imageToBitmap(image: Image): Bitmap? {
@@ -250,8 +243,7 @@ class CaptureService : Service() {
             val channel = NotificationChannel(
                 CHANNEL_ID, "Screen Capture", NotificationManager.IMPORTANCE_MIN
             )
-            getSystemService(NotificationManager::class.java)
-                .createNotificationChannel(channel)
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
     }
 

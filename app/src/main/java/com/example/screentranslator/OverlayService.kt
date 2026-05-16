@@ -18,6 +18,7 @@ import android.util.Log
 import android.view.Gravity
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
 
 class OverlayService : Service() {
 
@@ -25,6 +26,7 @@ class OverlayService : Service() {
     private var overlayParams: WindowManager.LayoutParams? = null
     private var handler: Handler? = null
     private val wm by lazy { getSystemService(Context.WINDOW_SERVICE) as WindowManager }
+    private lateinit var localBroadcast: LocalBroadcastManager
 
     private var posX = 100
     private var posY = 300
@@ -54,6 +56,7 @@ class OverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
         handler = Handler(Looper.getMainLooper())
+        localBroadcast = LocalBroadcastManager.getInstance(this)
         createNotificationChannel()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
@@ -73,7 +76,7 @@ class OverlayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        try { unregisterReceiver(updateReceiver) } catch (e: Exception) { }
+        localBroadcast.unregisterReceiver(updateReceiver)
         removeOverlay()
         handler?.removeCallbacksAndMessages(null)
     }
@@ -81,15 +84,18 @@ class OverlayService : Service() {
     private fun setupOverlay() {
         overlayView = OverlayView(this)
 
+        // Default state: PAUSE — user harus klik play dulu
+        overlayView?.setInitialPaused()
+
         overlayView?.onPlayPause = { isPlaying ->
             val i = Intent(CaptureService.ACTION_PLAY_PAUSE)
             i.putExtra(CaptureService.EXTRA_IS_PLAYING, isPlaying)
-            sendBroadcast(i)
+            localBroadcast.sendBroadcast(i)
             if (!isPlaying) overlayView?.clearBoxes()
         }
 
         overlayView?.onStop = {
-            sendBroadcast(Intent(CaptureService.ACTION_STOP))
+            localBroadcast.sendBroadcast(Intent(CaptureService.ACTION_STOP))
             stopSelf()
         }
 
@@ -161,11 +167,7 @@ class OverlayService : Service() {
             addAction(ACTION_UPDATE_BOXES)
             addAction(ACTION_CLEAR_BOXES)
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(updateReceiver, filter, RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(updateReceiver, filter)
-        }
+        localBroadcast.registerReceiver(updateReceiver, filter)
     }
 
     private fun createNotificationChannel() {

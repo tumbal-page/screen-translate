@@ -17,7 +17,7 @@ class OverlayView @JvmOverloads constructor(
     data class Box(val rect: Rect, val translation: String)
 
     private val boxes = mutableListOf<Box>()
-    var isPlaying = true
+    var isPlaying = false
         private set
     private var isExpanded = false
 
@@ -25,6 +25,11 @@ class OverlayView @JvmOverloads constructor(
     var onStop: (() -> Unit)? = null
     var onDrag: ((dx: Float, dy: Float) -> Unit)? = null
     var onExpandChanged: ((Boolean) -> Unit)? = null
+
+    fun setInitialPaused() {
+        isPlaying = false
+        postInvalidate()
+    }
 
     val bubbleRadius = 60f
     private val panelWidth = 300f
