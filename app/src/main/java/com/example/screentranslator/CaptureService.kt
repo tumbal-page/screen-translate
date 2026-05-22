@@ -54,8 +54,15 @@ class CaptureService : Service() {
         super.onCreate()
         handler = Handler(Looper.getMainLooper())
         createNotificationChannel()
-        // Panggil startForeground segera agar tidak timeout (5 detik)
-        startForeground(NOTIF_ID, buildNotification())
+        // Gunakan specialUse type agar startForeground valid sebelum token mediaProjection tersedia
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIF_ID, buildNotification(),
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            )
+        } else {
+            startForeground(NOTIF_ID, buildNotification())
+        }
         setupRecognizer()
         setupTranslator()
     }
@@ -69,7 +76,7 @@ class CaptureService : Service() {
             return START_NOT_STICKY
         }
 
-        // Upgrade foreground type ke mediaProjection setelah token tersedia
+        // Upgrade ke mediaProjection type setelah token tersedia
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
                 NOTIF_ID, buildNotification(),
