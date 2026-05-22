@@ -118,12 +118,14 @@ class CaptureService : Service() {
         }
         controlView?.onStop = { stopSelf() }
         controlView?.onDrag = { dx, dy ->
-            val p = controlParams ?: return@onDrag
-            p.x += dx.toInt(); p.y += dy.toInt()
-            val m = resources.displayMetrics
-            p.x = p.x.coerceIn(0, m.widthPixels - 200)
-            p.y = p.y.coerceIn(0, m.heightPixels - 200)
-            try { wm.updateViewLayout(controlView, p) } catch (e: Exception) { }
+            val p = controlParams
+            if (p != null) {
+                p.x += dx.toInt(); p.y += dy.toInt()
+                val m = resources.displayMetrics
+                p.x = p.x.coerceIn(0, m.widthPixels - 200)
+                p.y = p.y.coerceIn(0, m.heightPixels - 200)
+                try { wm.updateViewLayout(controlView, p) } catch (e: Exception) { }
+            }
         }
         controlView?.onExpandChanged = {
             try { wm.updateViewLayout(controlView, controlParams) } catch (e: Exception) { }
