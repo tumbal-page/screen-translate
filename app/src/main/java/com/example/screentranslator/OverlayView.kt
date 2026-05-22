@@ -38,7 +38,6 @@ class OverlayView @JvmOverloads constructor(
 
     private var touchStartX = 0f
     private var touchStartY = 0f
-    // FIX DRAG: Simpan posisi terakhir, bukan hanya posisi awal
     private var lastTouchX = 0f
     private var lastTouchY = 0f
     private var isDragging = false
@@ -169,19 +168,14 @@ class OverlayView @JvmOverloads constructor(
             MotionEvent.ACTION_DOWN -> {
                 touchStartX = x
                 touchStartY = y
-                // FIX DRAG: lastTouch diinit sama dengan touchStart
                 lastTouchX = x
                 lastTouchY = y
                 isDragging = false
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
-                // FIX DRAG: dx/dy dihitung dari posisi TERAKHIR, bukan dari awal
-                // Ini yang menyebabkan "random movement" — sebelumnya dx selalu akumulasi
                 val dx = x - lastTouchX
                 val dy = y - lastTouchY
-
-                // Cek apakah ini drag (dari posisi awal)
                 val totalDx = x - touchStartX
                 val totalDy = y - touchStartY
                 if (!isDragging && (abs(totalDx) > dragThreshold || abs(totalDy) > dragThreshold)) {
@@ -190,8 +184,6 @@ class OverlayView @JvmOverloads constructor(
                 if (isDragging) {
                     onDrag?.invoke(dx, dy)
                 }
-
-                // FIX DRAG: Update lastTouch setiap MOVE event
                 lastTouchX = x
                 lastTouchY = y
                 return true

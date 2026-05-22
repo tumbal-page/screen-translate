@@ -92,7 +92,6 @@ class OverlayService : Service() {
 
         overlayView?.onPlayPause = { isPlaying ->
             Log.d(TAG, "onPlayPause: $isPlaying")
-            // FIX: Kirim broadcast dengan package name eksplisit agar bisa lintas process ke :capture
             val i = Intent(CaptureService.ACTION_PLAY_PAUSE).apply {
                 `package` = packageName
                 putExtra(CaptureService.EXTRA_IS_PLAYING, isPlaying)
@@ -103,7 +102,6 @@ class OverlayService : Service() {
 
         overlayView?.onStop = {
             Log.d(TAG, "onStop called")
-            // Kirim stop ke CaptureService di process :capture
             sendBroadcast(Intent(CaptureService.ACTION_STOP).apply {
                 `package` = packageName
             })
@@ -150,9 +148,6 @@ class OverlayService : Service() {
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             type,
-            // FIX: Hapus FLAG_NOT_TOUCH_MODAL agar touch events benar-benar diterima overlay
-            // FLAG_NOT_FOCUSABLE = tidak steal keyboard focus
-            // FLAG_LAYOUT_IN_SCREEN = posisi relatif terhadap layar penuh
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
@@ -180,7 +175,6 @@ class OverlayService : Service() {
             addAction(ACTION_UPDATE_BOXES)
             addAction(ACTION_CLEAR_BOXES)
         }
-        // EXPORTED karena broadcast datang dari process :capture yang berbeda
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(updateReceiver, filter, RECEIVER_EXPORTED)
         } else {
