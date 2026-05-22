@@ -6,6 +6,10 @@ import com.google.mlkit.common.MlKit
 class CaptureApplication : Application() {
     override fun onCreate() {
         super.onCreate()
-        MlKit.initialize(this)
+        try {
+            MlKit.initialize(this)
+        } catch (e: IllegalStateException) {
+            // Already initialized, ignore
+        }
     }
 }
