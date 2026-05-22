@@ -6,6 +6,8 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.view.View
 import android.widget.Button
@@ -28,22 +30,26 @@ class MainActivity : AppCompatActivity() {
     private lateinit var downloadButton: Button
     private lateinit var startButton: Button
     private lateinit var statusText: TextView
+    private val handler = Handler(Looper.getMainLooper())
 
     private val requestScreenCapture =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result: ActivityResult ->
             val resultCode = result.resultCode
             val data: Intent? = result.data
-            android.util.Log.d("MainActivity", "Screen capture result: resultCode=$resultCode, data=$data")
             if (resultCode == Activity.RESULT_OK && data != null) {
+                // Langsung start CaptureService dengan token — tidak ada delay
                 val serviceIntent = Intent(this, CaptureService::class.java)
                 serviceIntent.putExtra(CaptureService.EXTRA_RESULT_CODE, resultCode)
                 serviceIntent.putExtra(CaptureService.EXTRA_RESULT_DATA, data)
-                // Gunakan startService biasa (bukan startForegroundService)
-                // agar tidak ada timer 5 detik. Service akan memanggil
-                // startForeground sendiri di onStartCommand.
-                startService(serviceIntent)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(serviceIntent)
+                } else {
+                    startService(serviceIntent)
+                }
             } else {
                 Toast.makeText(this, "Screen capture permission denied.", Toast.LENGTH_LONG).show()
+                // Stop OverlayService juga kalau capture ditolak
+                stopService(Intent(this, OverlayService::class.java))
             }
         }
 
@@ -131,8 +137,17 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        android.util.Log.d("MainActivity", "Requesting screen capture permission...")
-        requestScreenCapturePermission()
+        // Step 1: Start OverlayService dulu — overlay harus visible sebelum MediaProjection
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(Intent(this, OverlayService::class.java))
+        } else {
+            startService(Intent(this, OverlayService::class.java))
+        }
+
+        // Step 2: Tunggu overlay visible (~500ms), baru request screen capture
+        handler.postDelayed({
+            requestScreenCapturePermission()
+        }, 500)
     }
 
     private fun requestScreenCapturePermission() {
