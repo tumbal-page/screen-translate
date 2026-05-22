@@ -54,7 +54,6 @@ class CaptureService : Service() {
         super.onCreate()
         handler = Handler(Looper.getMainLooper())
         createNotificationChannel()
-        startForeground(NOTIF_ID, buildNotification())
         setupRecognizer()
         setupTranslator()
     }
@@ -68,14 +67,16 @@ class CaptureService : Service() {
             return START_NOT_STICKY
         }
 
+        // Satu kali startForeground dengan type mediaProjection
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
                 NOTIF_ID, buildNotification(),
                 android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
             )
+        } else {
+            startForeground(NOTIF_ID, buildNotification())
         }
 
-        // Stop projection lama jika ada, lalu setup ulang
         stopProjection()
         removeOverlay()
         setupOverlay()
