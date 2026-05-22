@@ -135,10 +135,8 @@ class CaptureService : Service() {
             addAction(ACTION_PLAY_PAUSE)
             addAction(ACTION_STOP)
         }
-        // FIX 4: RECEIVER_NOT_EXPORTED karena broadcast dari app sendiri
-        // Di proses :capture, kita tetap perlu terima broadcast dari main process
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(commandReceiver, filter, RECEIVER_EXPORTED)
+            registerReceiver(commandReceiver, filter, RECEIVER_NOT_EXPORTED)
         } else {
             registerReceiver(commandReceiver, filter)
         }
