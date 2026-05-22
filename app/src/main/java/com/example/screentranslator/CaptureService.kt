@@ -55,10 +55,10 @@ class CaptureService : Service() {
                             `package` = packageName
                         })
                     }
-                    Log.d(TAG, "PlayPause: $playing")
+                    AppLog.d(TAG, "PlayPause: $playing")
                 }
                 ACTION_STOP -> {
-                    Log.d(TAG, "Stop received")
+                    AppLog.d(TAG, "Stop received")
                     stopSelf()
                 }
             }
@@ -136,7 +136,7 @@ class CaptureService : Service() {
 
         mediaProjection?.registerCallback(object : MediaProjection.Callback() {
             override fun onStop() {
-                Log.d(TAG, "MediaProjection stopped by system")
+                AppLog.d(TAG, "MediaProjection stopped by system")
                 stopSelf()
             }
         }, handler)
@@ -173,7 +173,7 @@ class CaptureService : Service() {
         val inputImage = InputImage.fromBitmap(bitmap, 0)
         recognizer.process(inputImage)
             .addOnSuccessListener { text: Text -> handleTextBlocks(text) }
-            .addOnFailureListener { e -> Log.e(TAG, "Recognition failed", e) }
+            .addOnFailureListener { e -> AppLog.e(TAG, "Recognition failed", e) }
     }
 
     private fun handleTextBlocks(result: Text) {
@@ -203,7 +203,7 @@ class CaptureService : Service() {
                         if (collectedBoxes.size == totalLines) sendBoxesToOverlay(collectedBoxes)
                     }
                     .addOnFailureListener { e ->
-                        Log.e(TAG, "Translation failed: $text", e)
+                        AppLog.e(TAG, "Translation failed: $text", e)
                         collectedBoxes[index] = BoxData(rect.left, rect.top, rect.right, rect.bottom, text)
                         if (collectedBoxes.size == totalLines) sendBoxesToOverlay(collectedBoxes)
                     }
@@ -233,7 +233,7 @@ class CaptureService : Service() {
             bitmap.copyPixelsFromBuffer(buffer)
             Bitmap.createBitmap(bitmap, 0, 0, width, height)
         } catch (e: Exception) {
-            Log.e(TAG, "imageToBitmap failed", e)
+            AppLog.e(TAG, "imageToBitmap failed", e)
             null
         }
     }

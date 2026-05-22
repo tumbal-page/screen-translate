@@ -109,7 +109,7 @@ class OverlayService : Service() {
                 try {
                     wm.updateViewLayout(overlayView, params)
                 } catch (e: Exception) {
-                    Log.e(TAG, "updateViewLayout drag failed", e)
+                    AppLog.e(TAG, "updateViewLayout drag failed", e)
                 }
             }
         }
@@ -120,7 +120,7 @@ class OverlayService : Service() {
                 try {
                     wm.updateViewLayout(overlayView, params)
                 } catch (e: Exception) {
-                    Log.e(TAG, "updateViewLayout expand failed", e)
+                    AppLog.e(TAG, "updateViewLayout expand failed", e)
                 }
             }
         }
@@ -148,12 +148,12 @@ class OverlayService : Service() {
 
         overlayParams = params
         wm.addView(overlayView, params)
-        Log.d(TAG, "Overlay added")
+        AppLog.d(TAG, "Overlay added")
     }
 
     private fun removeOverlay() {
         overlayView?.let {
-            try { wm.removeView(it) } catch (e: Exception) { Log.e(TAG, "removeOverlay failed", e) }
+            try { wm.removeView(it) } catch (e: Exception) { AppLog.e(TAG, "removeOverlay failed", e) }
         }
         overlayView = null
         overlayParams = null
