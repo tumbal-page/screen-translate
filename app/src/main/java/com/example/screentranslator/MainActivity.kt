@@ -35,10 +35,11 @@ class MainActivity : AppCompatActivity() {
             val data: Intent? = result.data
             android.util.Log.d("MainActivity", "Screen capture result: resultCode=$resultCode, data=$data")
             if (resultCode == Activity.RESULT_OK && data != null) {
-                // Hanya start CaptureService — overlay dibuat di dalam CaptureService
                 val serviceIntent = Intent(this, CaptureService::class.java)
                 serviceIntent.putExtra(CaptureService.EXTRA_RESULT_CODE, resultCode)
                 serviceIntent.putExtra(CaptureService.EXTRA_RESULT_DATA, data)
+                // Gunakan startService biasa — startForeground dipanggil di dalam service
+                // dengan mediaProjection type sebelum operasi apapun
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     startForegroundService(serviceIntent)
                 } else {
