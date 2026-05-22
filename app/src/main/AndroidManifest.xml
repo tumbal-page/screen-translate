@@ -27,6 +27,7 @@
             </intent-filter>
         </activity>
 
+        <!-- Service A: hanya overlay, tidak pegang MediaProjection -->
         <service
             android:name=".OverlayService"
             android:exported="false"
@@ -37,6 +38,7 @@
                 android:value="overlay_control" />
         </service>
 
+        <!-- Service B: hanya MediaProjection, tidak buat overlay, process terpisah -->
         <service
             android:name=".CaptureService"
             android:exported="false"

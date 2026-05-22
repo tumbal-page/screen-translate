@@ -38,6 +38,9 @@ class OverlayView @JvmOverloads constructor(
 
     private var touchStartX = 0f
     private var touchStartY = 0f
+    // FIX DRAG: Simpan posisi terakhir, bukan hanya posisi awal
+    private var lastTouchX = 0f
+    private var lastTouchY = 0f
     private var isDragging = false
     private val dragThreshold = 8f
 
@@ -122,7 +125,7 @@ class OverlayView @JvmOverloads constructor(
         canvas.drawCircle(cx, cy, bubbleRadius, bubblePaint)
         canvas.drawCircle(cx, cy, bubbleRadius, bubbleBorderPaint)
         canvas.drawText(
-            if (isPlaying) "ON" else "II",
+            if (isPlaying) "ON" else "||",
             cx, cy + bubbleTextPaint.textSize / 3, bubbleTextPaint
         )
     }
@@ -143,14 +146,14 @@ class OverlayView @JvmOverloads constructor(
             Color.argb(220, 255, 165, 0) else Color.argb(220, 0, 180, 80)
         canvas.drawCircle(playBtnCx, playBtnCy, btnRadius, btnPlayPaint)
         canvas.drawText(
-            if (isPlaying) "⏸" else "▶",
+            if (isPlaying) "||" else ">",
             playBtnCx, playBtnCy + btnTextPaint.textSize / 3, btnTextPaint
         )
 
         stopBtnCx = px + panelWidth * 0.67f
         stopBtnCy = py + panelHeight / 2
         canvas.drawCircle(stopBtnCx, stopBtnCy, btnRadius, btnStopPaint)
-        canvas.drawText("■", stopBtnCx, stopBtnCy + btnTextPaint.textSize / 3, btnTextPaint)
+        canvas.drawText("X", stopBtnCx, stopBtnCy + btnTextPaint.textSize / 3, btnTextPaint)
 
         canvas.drawText(
             if (isPlaying) "Pause" else "Play",
@@ -166,24 +169,40 @@ class OverlayView @JvmOverloads constructor(
             MotionEvent.ACTION_DOWN -> {
                 touchStartX = x
                 touchStartY = y
+                // FIX DRAG: lastTouch diinit sama dengan touchStart
+                lastTouchX = x
+                lastTouchY = y
                 isDragging = false
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
-                val dx = x - touchStartX
-                val dy = y - touchStartY
-                if (!isDragging && (abs(dx) > dragThreshold || abs(dy) > dragThreshold)) {
+                // FIX DRAG: dx/dy dihitung dari posisi TERAKHIR, bukan dari awal
+                // Ini yang menyebabkan "random movement" — sebelumnya dx selalu akumulasi
+                val dx = x - lastTouchX
+                val dy = y - lastTouchY
+
+                // Cek apakah ini drag (dari posisi awal)
+                val totalDx = x - touchStartX
+                val totalDy = y - touchStartY
+                if (!isDragging && (abs(totalDx) > dragThreshold || abs(totalDy) > dragThreshold)) {
                     isDragging = true
                 }
-                if (isDragging) onDrag?.invoke(dx, dy)
+                if (isDragging) {
+                    onDrag?.invoke(dx, dy)
+                }
+
+                // FIX DRAG: Update lastTouch setiap MOVE event
+                lastTouchX = x
+                lastTouchY = y
                 return true
             }
             MotionEvent.ACTION_UP -> {
                 if (!isDragging) handleTap(x, y)
+                isDragging = false
                 return true
             }
         }
-        return false
+        return true
     }
 
     private fun handleTap(x: Float, y: Float) {

@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.util.Log
 import android.view.View
 import android.widget.Button
 import android.widget.TextView
@@ -24,6 +25,7 @@ import com.google.mlkit.nl.translate.TranslatorOptions
 class MainActivity : AppCompatActivity() {
 
     companion object {
+        private const val TAG = "MainActivity"
         private const val REQUEST_CODE_POST_NOTIFICATIONS = 1001
     }
 
@@ -36,19 +38,26 @@ class MainActivity : AppCompatActivity() {
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result: ActivityResult ->
             val resultCode = result.resultCode
             val data: Intent? = result.data
+
+            Log.d(TAG, "Screen capture result: resultCode=$resultCode, data=$data")
+
             if (resultCode == Activity.RESULT_OK && data != null) {
-                // Langsung start CaptureService dengan token — tidak ada delay
-                val serviceIntent = Intent(this, CaptureService::class.java)
-                serviceIntent.putExtra(CaptureService.EXTRA_RESULT_CODE, resultCode)
-                serviceIntent.putExtra(CaptureService.EXTRA_RESULT_DATA, data)
+                // FIX: Pada Android 14+ (API 34), MediaProjection token hanya valid
+                // jika CaptureService di-start SEGERA dari callback ini, tanpa delay.
+                // Jangan pakai postDelayed atau handler delay di sini.
+                val serviceIntent = Intent(this, CaptureService::class.java).apply {
+                    putExtra(CaptureService.EXTRA_RESULT_CODE, resultCode)
+                    putExtra(CaptureService.EXTRA_RESULT_DATA, data)
+                }
+                Log.d(TAG, "Starting CaptureService...")
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     startForegroundService(serviceIntent)
                 } else {
                     startService(serviceIntent)
                 }
             } else {
+                Log.w(TAG, "Screen capture denied or cancelled")
                 Toast.makeText(this, "Screen capture permission denied.", Toast.LENGTH_LONG).show()
-                // Stop OverlayService juga kalau capture ditolak
                 stopService(Intent(this, OverlayService::class.java))
             }
         }
@@ -137,20 +146,34 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // Step 1: Start OverlayService dulu — overlay harus visible sebelum MediaProjection
+        // FIX: Jangan start OverlayService sebelum MediaProjection dialog.
+        // Di Android 14+, system mensyaratkan foreground service dengan type mediaProjection
+        // harus di-start dalam konteks yang sama dengan saat user grant permission.
+        // OverlayService (dataSync) di-start duluan menyebabkan konflik foreground service type.
+        //
+        // Urutan yang benar:
+        // 1. Request screen capture permission (dialog muncul)
+        // 2. Setelah user OK → start CaptureService (mediaProjection type)
+        // 3. CaptureService notify OverlayService untuk mulai via broadcast
+        //
+        // Tapi karena OverlayService perlu visible sebelum capture,
+        // kita start OverlayService TANPA delay, lalu request capture SEGERA.
+        // Tidak perlu postDelayed — overlay tidak perlu fully drawn sebelum dialog.
+
+        Log.d(TAG, "Starting OverlayService...")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(Intent(this, OverlayService::class.java))
         } else {
             startService(Intent(this, OverlayService::class.java))
         }
 
-        // Step 2: Tunggu overlay visible (~500ms), baru request screen capture
-        handler.postDelayed({
-            requestScreenCapturePermission()
-        }, 500)
+        // Langsung request — tidak perlu delay 500ms
+        // Android akan handle ordering secara internal
+        requestScreenCapturePermission()
     }
 
     private fun requestScreenCapturePermission() {
+        Log.d(TAG, "Requesting screen capture permission...")
         val projectionManager =
             getSystemService(Context.MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
         requestScreenCapture.launch(projectionManager.createScreenCaptureIntent())
