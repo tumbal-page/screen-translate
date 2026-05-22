@@ -33,6 +33,7 @@ class MainActivity : AppCompatActivity() {
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result: ActivityResult ->
             val resultCode = result.resultCode
             val data: Intent? = result.data
+            android.util.Log.d("MainActivity", "Screen capture result: resultCode=$resultCode, data=$data")
             if (resultCode == Activity.RESULT_OK && data != null) {
                 // Start OverlayService dulu
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -138,8 +139,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // Request screen capture DULU saat Activity masih foreground
-        // OverlayService distart setelah permission granted di callback
+        android.util.Log.d("MainActivity", "Requesting screen capture permission...")
         requestScreenCapturePermission()
     }
 
