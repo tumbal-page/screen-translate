@@ -43,10 +43,16 @@ class OverlayService : Service() {
                         val overlayBoxes = list.map {
                             OverlayView.Box(Rect(it.left, it.top, it.right, it.bottom), it.text)
                         }
-                        overlayView?.updateBoxes(overlayBoxes)
+                        handler?.post {
+                            overlayView?.updateBoxes(overlayBoxes)
+                        }
                     }
                 }
-                ACTION_CLEAR_BOXES -> overlayView?.clearBoxes()
+                ACTION_CLEAR_BOXES -> {
+                    handler?.post {
+                        overlayView?.clearBoxes()
+                    }
+                }
             }
         }
     }
@@ -65,6 +71,7 @@ class OverlayService : Service() {
         }
         setupOverlay()
         registerUpdateReceiver()
+        Log.d(TAG, "OverlayService created")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
@@ -73,9 +80,10 @@ class OverlayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        try { unregisterReceiver(updateReceiver) } catch (e: Exception) { }
+        try { unregisterReceiver(updateReceiver) } catch (_: Exception) { }
         removeOverlay()
         handler?.removeCallbacksAndMessages(null)
+        Log.d(TAG, "OverlayService destroyed")
     }
 
     private fun setupOverlay() {
@@ -83,6 +91,8 @@ class OverlayService : Service() {
         overlayView?.setInitialPaused()
 
         overlayView?.onPlayPause = { isPlaying ->
+            Log.d(TAG, "onPlayPause: $isPlaying")
+            // FIX: Kirim broadcast dengan package name eksplisit agar bisa lintas process ke :capture
             val i = Intent(CaptureService.ACTION_PLAY_PAUSE).apply {
                 `package` = packageName
                 putExtra(CaptureService.EXTRA_IS_PLAYING, isPlaying)
@@ -92,7 +102,11 @@ class OverlayService : Service() {
         }
 
         overlayView?.onStop = {
-            sendBroadcast(Intent(CaptureService.ACTION_STOP).apply { `package` = packageName })
+            Log.d(TAG, "onStop called")
+            // Kirim stop ke CaptureService di process :capture
+            sendBroadcast(Intent(CaptureService.ACTION_STOP).apply {
+                `package` = packageName
+            })
             stopSelf()
         }
 
@@ -109,7 +123,7 @@ class OverlayService : Service() {
                 try {
                     wm.updateViewLayout(overlayView, params)
                 } catch (e: Exception) {
-                    AppLog.e(TAG, "updateViewLayout drag failed", e)
+                    Log.e(TAG, "updateViewLayout drag failed", e)
                 }
             }
         }
@@ -120,7 +134,7 @@ class OverlayService : Service() {
                 try {
                     wm.updateViewLayout(overlayView, params)
                 } catch (e: Exception) {
-                    AppLog.e(TAG, "updateViewLayout expand failed", e)
+                    Log.e(TAG, "updateViewLayout expand failed", e)
                 }
             }
         }
@@ -136,9 +150,11 @@ class OverlayService : Service() {
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             type,
+            // FIX: Hapus FLAG_NOT_TOUCH_MODAL agar touch events benar-benar diterima overlay
+            // FLAG_NOT_FOCUSABLE = tidak steal keyboard focus
+            // FLAG_LAYOUT_IN_SCREEN = posisi relatif terhadap layar penuh
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -148,12 +164,12 @@ class OverlayService : Service() {
 
         overlayParams = params
         wm.addView(overlayView, params)
-        AppLog.d(TAG, "Overlay added")
+        Log.d(TAG, "Overlay added at ($posX, $posY)")
     }
 
     private fun removeOverlay() {
         overlayView?.let {
-            try { wm.removeView(it) } catch (e: Exception) { AppLog.e(TAG, "removeOverlay failed", e) }
+            try { wm.removeView(it) } catch (e: Exception) { Log.e(TAG, "removeOverlay failed", e) }
         }
         overlayView = null
         overlayParams = null
@@ -164,11 +180,13 @@ class OverlayService : Service() {
             addAction(ACTION_UPDATE_BOXES)
             addAction(ACTION_CLEAR_BOXES)
         }
+        // EXPORTED karena broadcast datang dari process :capture yang berbeda
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(updateReceiver, filter, RECEIVER_EXPORTED)
         } else {
             registerReceiver(updateReceiver, filter)
         }
+        Log.d(TAG, "Update receiver registered")
     }
 
     private fun createNotificationChannel() {

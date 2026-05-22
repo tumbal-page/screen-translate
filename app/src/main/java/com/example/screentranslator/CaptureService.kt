@@ -33,6 +33,7 @@ import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 class CaptureService : Service() {
 
@@ -42,7 +43,17 @@ class CaptureService : Service() {
     private var translator: Translator? = null
     private lateinit var recognizer: TextRecognizer
     private val translationCache = ConcurrentHashMap<String, String>()
-    private val isPlaying = AtomicBoolean(false)
+
+    // FIX 1: isPlaying default true — langsung mulai saat service start,
+    // Play/Pause dari OverlayService hanya toggle
+    private val isPlaying = AtomicBoolean(true)
+
+    // FIX 2: Throttle — jangan proses setiap frame, cukup 1 frame per 500ms
+    private var lastFrameTime = 0L
+    private val FRAME_INTERVAL_MS = 500L
+
+    // FIX 3: Flag agar tidak proses frame baru sebelum yang lama selesai
+    private val isProcessing = AtomicBoolean(false)
 
     private val commandReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -51,14 +62,13 @@ class CaptureService : Service() {
                     val playing = intent.getBooleanExtra(EXTRA_IS_PLAYING, false)
                     isPlaying.set(playing)
                     if (!playing) {
-                        sendBroadcast(Intent(OverlayService.ACTION_CLEAR_BOXES).apply {
-                            `package` = packageName
-                        })
+                        // Kirim clear ke OverlayService (same process = main process via broadcast)
+                        sendBroadcastToMain(Intent(OverlayService.ACTION_CLEAR_BOXES))
                     }
-                    AppLog.d(TAG, "PlayPause: $playing")
+                    Log.d(TAG, "PlayPause received: $playing")
                 }
                 ACTION_STOP -> {
-                    AppLog.d(TAG, "Stop received")
+                    Log.d(TAG, "Stop received")
                     stopSelf()
                 }
             }
@@ -73,6 +83,7 @@ class CaptureService : Service() {
         setupRecognizer()
         setupTranslator()
         registerCommandReceiver()
+        Log.d(TAG, "CaptureService created")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -80,6 +91,7 @@ class CaptureService : Service() {
         val data = intent?.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
 
         if (resultCode == -1 || data == null) {
+            Log.e(TAG, "Missing resultCode or data — stopping")
             stopSelf()
             return START_NOT_STICKY
         }
@@ -99,10 +111,11 @@ class CaptureService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        try { unregisterReceiver(commandReceiver) } catch (e: Exception) { }
+        try { unregisterReceiver(commandReceiver) } catch (_: Exception) { }
         stopProjection()
         translator?.close()
         handler?.removeCallbacksAndMessages(null)
+        Log.d(TAG, "CaptureService destroyed")
     }
 
     private fun setupRecognizer() {
@@ -122,11 +135,14 @@ class CaptureService : Service() {
             addAction(ACTION_PLAY_PAUSE)
             addAction(ACTION_STOP)
         }
+        // FIX 4: RECEIVER_NOT_EXPORTED karena broadcast dari app sendiri
+        // Di proses :capture, kita tetap perlu terima broadcast dari main process
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(commandReceiver, filter, RECEIVER_EXPORTED)
         } else {
             registerReceiver(commandReceiver, filter)
         }
+        Log.d(TAG, "Command receiver registered")
     }
 
     private fun startProjection(resultCode: Int, data: Intent) {
@@ -134,9 +150,15 @@ class CaptureService : Service() {
             getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         mediaProjection = projectionManager.getMediaProjection(resultCode, data)
 
+        if (mediaProjection == null) {
+            Log.e(TAG, "getMediaProjection returned null!")
+            stopSelf()
+            return
+        }
+
         mediaProjection?.registerCallback(object : MediaProjection.Callback() {
             override fun onStop() {
-                AppLog.d(TAG, "MediaProjection stopped by system")
+                Log.d(TAG, "MediaProjection stopped by system")
                 stopSelf()
             }
         }, handler)
@@ -146,6 +168,8 @@ class CaptureService : Service() {
         val height = metrics.heightPixels
         val dpi = metrics.densityDpi
 
+        Log.d(TAG, "Starting projection: ${width}x${height} @ ${dpi}dpi")
+
         imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
         mediaProjection?.createVirtualDisplay(
             "ScreenCapture", width, height, dpi,
@@ -154,12 +178,32 @@ class CaptureService : Service() {
         )
 
         imageReader!!.setOnImageAvailableListener({ reader ->
+            val now = System.currentTimeMillis()
+
+            // FIX 5: Throttle — skip frame kalau interval belum cukup atau sedang proses
+            if (!isPlaying.get()) {
+                reader.acquireLatestImage()?.close()
+                return@setOnImageAvailableListener
+            }
+            if (now - lastFrameTime < FRAME_INTERVAL_MS) {
+                reader.acquireLatestImage()?.close()
+                return@setOnImageAvailableListener
+            }
+            if (isProcessing.getAndSet(true)) {
+                reader.acquireLatestImage()?.close()
+                return@setOnImageAvailableListener
+            }
+
+            lastFrameTime = now
             val image: Image? = reader.acquireLatestImage()
             if (image != null) {
-                if (isPlaying.get()) processFrame(image)
-                image.close()
+                processFrame(image)
+            } else {
+                isProcessing.set(false)
             }
         }, handler)
+
+        Log.d(TAG, "VirtualDisplay created, listening for frames")
     }
 
     private fun stopProjection() {
@@ -169,22 +213,46 @@ class CaptureService : Service() {
     }
 
     private fun processFrame(image: Image) {
-        val bitmap = imageToBitmap(image) ?: return
+        val bitmap = imageToBitmap(image)
+        image.close() // FIX 6: Close image segera setelah konversi, sebelum async
+        if (bitmap == null) {
+            isProcessing.set(false)
+            return
+        }
         val inputImage = InputImage.fromBitmap(bitmap, 0)
         recognizer.process(inputImage)
-            .addOnSuccessListener { text: Text -> handleTextBlocks(text) }
-            .addOnFailureListener { e -> AppLog.e(TAG, "Recognition failed", e) }
+            .addOnSuccessListener { text: Text ->
+                bitmap.recycle() // FIX 7: Recycle bitmap setelah OCR selesai
+                handleTextBlocks(text)
+            }
+            .addOnFailureListener { e ->
+                bitmap.recycle()
+                isProcessing.set(false)
+                Log.e(TAG, "Recognition failed", e)
+            }
     }
 
     private fun handleTextBlocks(result: Text) {
-        val t = translator ?: return
+        val t = translator ?: run {
+            isProcessing.set(false)
+            return
+        }
+
         val lines = result.textBlocks
             .flatMap { it.lines }
             .filter { it.boundingBox != null && it.text.trim().isNotEmpty() }
 
-        if (lines.isEmpty()) return
+        if (lines.isEmpty()) {
+            Log.d(TAG, "No text found in frame")
+            isProcessing.set(false)
+            return
+        }
+
+        Log.d(TAG, "Found ${lines.size} lines to translate")
 
         val totalLines = lines.size
+        // FIX 8: Gunakan AtomicInteger untuk counter yang thread-safe
+        val doneCount = AtomicInteger(0)
         val collectedBoxes = ConcurrentHashMap<Int, BoxData>()
 
         lines.forEachIndexed { index, line ->
@@ -192,29 +260,46 @@ class CaptureService : Service() {
             val text = line.text.trim()
             val cached = translationCache[text]
 
+            fun finalize(translated: String) {
+                collectedBoxes[index] = BoxData(rect.left, rect.top, rect.right, rect.bottom, translated)
+                // FIX 9: Gunakan counter atomik — bukan size comparison yang bisa miss
+                if (doneCount.incrementAndGet() == totalLines) {
+                    sendBoxesToOverlay(collectedBoxes)
+                    isProcessing.set(false)
+                }
+            }
+
             if (cached != null) {
-                collectedBoxes[index] = BoxData(rect.left, rect.top, rect.right, rect.bottom, cached)
-                if (collectedBoxes.size == totalLines) sendBoxesToOverlay(collectedBoxes)
+                finalize(cached)
             } else {
                 t.translate(text)
                     .addOnSuccessListener { translated ->
                         translationCache[text] = translated
-                        collectedBoxes[index] = BoxData(rect.left, rect.top, rect.right, rect.bottom, translated)
-                        if (collectedBoxes.size == totalLines) sendBoxesToOverlay(collectedBoxes)
+                        finalize(translated)
                     }
                     .addOnFailureListener { e ->
-                        AppLog.e(TAG, "Translation failed: $text", e)
-                        collectedBoxes[index] = BoxData(rect.left, rect.top, rect.right, rect.bottom, text)
-                        if (collectedBoxes.size == totalLines) sendBoxesToOverlay(collectedBoxes)
+                        Log.e(TAG, "Translation failed: $text", e)
+                        finalize(text) // fallback: tampilkan teks asli
                     }
             }
         }
     }
 
+    // FIX 10: Kirim broadcast dengan package name yang benar agar diterima
+    // OverlayService di main process meski CaptureService di :capture process
+    private fun sendBroadcastToMain(intent: Intent) {
+        intent.`package` = packageName
+        sendBroadcast(intent)
+    }
+
     private fun sendBoxesToOverlay(boxes: ConcurrentHashMap<Int, BoxData>) {
+        Log.d(TAG, "Sending ${boxes.size} boxes to overlay")
         val intent = Intent(OverlayService.ACTION_UPDATE_BOXES).apply {
             `package` = packageName
-            putParcelableArrayListExtra(OverlayService.EXTRA_BOXES, ArrayList(boxes.values.toList()))
+            putParcelableArrayListExtra(
+                OverlayService.EXTRA_BOXES,
+                ArrayList(boxes.values.sortedBy { it.top })
+            )
         }
         sendBroadcast(intent)
     }
@@ -223,17 +308,22 @@ class CaptureService : Service() {
         return try {
             val width = image.width
             val height = image.height
-            val pixelStride = image.planes[0].pixelStride
-            val rowStride = image.planes[0].rowStride
+            val plane = image.planes[0]
+            val pixelStride = plane.pixelStride
+            val rowStride = plane.rowStride
             val rowPadding = rowStride - pixelStride * width
-            val buffer: ByteBuffer = image.planes[0].buffer
-            val bitmap = Bitmap.createBitmap(
+            val buffer: ByteBuffer = plane.buffer
+
+            // FIX 11: Buat bitmap dengan ukuran yang tepat lalu crop — recycle tmp bitmap
+            val tmp = Bitmap.createBitmap(
                 width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888
             )
-            bitmap.copyPixelsFromBuffer(buffer)
-            Bitmap.createBitmap(bitmap, 0, 0, width, height)
+            tmp.copyPixelsFromBuffer(buffer)
+            val cropped = Bitmap.createBitmap(tmp, 0, 0, width, height)
+            tmp.recycle() // Recycle temporary bitmap
+            cropped
         } catch (e: Exception) {
-            AppLog.e(TAG, "imageToBitmap failed", e)
+            Log.e(TAG, "imageToBitmap failed", e)
             null
         }
     }
