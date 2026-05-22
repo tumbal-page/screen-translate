@@ -38,13 +38,10 @@ class MainActivity : AppCompatActivity() {
                 val serviceIntent = Intent(this, CaptureService::class.java)
                 serviceIntent.putExtra(CaptureService.EXTRA_RESULT_CODE, resultCode)
                 serviceIntent.putExtra(CaptureService.EXTRA_RESULT_DATA, data)
-                // Gunakan startService biasa — startForeground dipanggil di dalam service
-                // dengan mediaProjection type sebelum operasi apapun
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    startForegroundService(serviceIntent)
-                } else {
-                    startService(serviceIntent)
-                }
+                // Gunakan startService biasa (bukan startForegroundService)
+                // agar tidak ada timer 5 detik. Service akan memanggil
+                // startForeground sendiri di onStartCommand.
+                startService(serviceIntent)
             } else {
                 Toast.makeText(this, "Screen capture permission denied.", Toast.LENGTH_LONG).show()
             }
