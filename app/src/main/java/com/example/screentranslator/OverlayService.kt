@@ -120,23 +120,27 @@ class OverlayService : Service() {
         }
 
         controlView?.onDrag = { dx, dy ->
-            val params = controlParams ?: return@onDrag
-            params.x += dx.toInt()
-            params.y += dy.toInt()
-            val metrics = resources.displayMetrics
-            params.x = params.x.coerceIn(0, metrics.widthPixels - 200)
-            params.y = params.y.coerceIn(0, metrics.heightPixels - 200)
-            posX = params.x
-            posY = params.y
-            try { wm.updateViewLayout(controlView, params) } catch (e: Exception) {
-                Log.e(TAG, "drag failed", e)
+            val params = controlParams
+            if (params != null) {
+                params.x += dx.toInt()
+                params.y += dy.toInt()
+                val metrics = resources.displayMetrics
+                params.x = params.x.coerceIn(0, metrics.widthPixels - 200)
+                params.y = params.y.coerceIn(0, metrics.heightPixels - 200)
+                posX = params.x
+                posY = params.y
+                try { wm.updateViewLayout(controlView, params) } catch (e: Exception) {
+                    Log.e(TAG, "drag failed", e)
+                }
             }
         }
 
         controlView?.onExpandChanged = {
-            val params = controlParams ?: return@onExpandChanged
-            try { wm.updateViewLayout(controlView, params) } catch (e: Exception) {
-                Log.e(TAG, "expand failed", e)
+            val params = controlParams
+            if (params != null) {
+                try { wm.updateViewLayout(controlView, params) } catch (e: Exception) {
+                    Log.e(TAG, "expand failed", e)
+                }
             }
         }
 
