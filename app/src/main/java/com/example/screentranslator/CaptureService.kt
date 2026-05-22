@@ -57,7 +57,6 @@ class CaptureService : Service() {
         startForeground(NOTIF_ID, buildNotification())
         setupRecognizer()
         setupTranslator()
-        setupOverlay()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -76,6 +75,10 @@ class CaptureService : Service() {
             )
         }
 
+        // Stop projection lama jika ada, lalu setup ulang
+        stopProjection()
+        removeOverlay()
+        setupOverlay()
         startProjection(resultCode, data)
         return START_STICKY
     }
