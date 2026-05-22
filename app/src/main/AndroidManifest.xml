@@ -6,7 +6,6 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
@@ -27,19 +26,11 @@
             </intent-filter>
         </activity>
 
-        <!-- Service A: hanya overlay, tidak pegang MediaProjection -->
-        <service
-            android:name=".OverlayService"
-            android:exported="false"
-            android:stopWithTask="false"
-            android:foregroundServiceType="dataSync" />
-
-        <!-- Service B: hanya MediaProjection, tidak buat overlay, process terpisah -->
+        <!-- Service tunggal: pegang MediaProjection + buat overlay -->
         <service
             android:name=".CaptureService"
             android:exported="false"
             android:stopWithTask="false"
-            android:process=":capture"
             android:foregroundServiceType="mediaProjection" />
 
     </application>

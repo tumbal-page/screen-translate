@@ -4,10 +4,8 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
@@ -20,6 +18,8 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
+import android.view.Gravity
+import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import com.google.mlkit.nl.translate.TranslateLanguage
 import com.google.mlkit.nl.translate.Translation
@@ -44,26 +44,11 @@ class CaptureService : Service() {
     private val translationCache = ConcurrentHashMap<String, String>()
     private val isPlaying = AtomicBoolean(false)
 
-    private val commandReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            when (intent.action) {
-                ACTION_PLAY_PAUSE -> {
-                    val playing = intent.getBooleanExtra(EXTRA_IS_PLAYING, false)
-                    isPlaying.set(playing)
-                    if (!playing) {
-                        sendBroadcast(Intent(OverlayService.ACTION_CLEAR_BOXES).apply {
-                            `package` = packageName
-                        })
-                    }
-                    Log.d(TAG, "PlayPause: $playing")
-                }
-                ACTION_STOP -> {
-                    Log.d(TAG, "Stop received")
-                    stopSelf()
-                }
-            }
-        }
-    }
+    // Overlay views — dikelola langsung di service ini
+    private val wm by lazy { getSystemService(Context.WINDOW_SERVICE) as WindowManager }
+    private var boxesView: OverlayBoxesView? = null
+    private var controlView: OverlayView? = null
+    private var controlParams: WindowManager.LayoutParams? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -72,7 +57,7 @@ class CaptureService : Service() {
         startForeground(NOTIF_ID, buildNotification())
         setupRecognizer()
         setupTranslator()
-        registerCommandReceiver()
+        setupOverlay()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -99,10 +84,68 @@ class CaptureService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        try { unregisterReceiver(commandReceiver) } catch (e: Exception) { }
         stopProjection()
         translator?.close()
         handler?.removeCallbacksAndMessages(null)
+        removeOverlay()
+    }
+
+    private fun setupOverlay() {
+        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
+
+        // Full-screen boxes view (not touchable)
+        boxesView = OverlayBoxesView(this)
+        wm.addView(boxesView, WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            type,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            PixelFormat.TRANSLUCENT
+        ))
+
+        // Control bubble (touchable, draggable)
+        controlView = OverlayView(this)
+        controlView?.setInitialPaused()
+        controlView?.onPlayPause = { playing ->
+            isPlaying.set(playing)
+            boxesView?.setPlaying(playing)
+            if (!playing) boxesView?.clearBoxes()
+        }
+        controlView?.onStop = { stopSelf() }
+        controlView?.onDrag = { dx, dy ->
+            val p = controlParams ?: return@onDrag
+            p.x += dx.toInt(); p.y += dy.toInt()
+            val m = resources.displayMetrics
+            p.x = p.x.coerceIn(0, m.widthPixels - 200)
+            p.y = p.y.coerceIn(0, m.heightPixels - 200)
+            try { wm.updateViewLayout(controlView, p) } catch (e: Exception) { }
+        }
+        controlView?.onExpandChanged = {
+            try { wm.updateViewLayout(controlView, controlParams) } catch (e: Exception) { }
+        }
+        val cp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            type,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.START; x = 100; y = 300 }
+        controlParams = cp
+        wm.addView(controlView, cp)
+        Log.d(TAG, "Overlay setup done")
+    }
+
+    private fun removeOverlay() {
+        boxesView?.let { try { wm.removeView(it) } catch (e: Exception) { } }
+        controlView?.let { try { wm.removeView(it) } catch (e: Exception) { } }
+        boxesView = null; controlView = null; controlParams = null
     }
 
     private fun setupRecognizer() {
@@ -117,17 +160,6 @@ class CaptureService : Service() {
         translator = Translation.getClient(options)
     }
 
-    private fun registerCommandReceiver() {
-        val filter = IntentFilter().apply {
-            addAction(ACTION_PLAY_PAUSE)
-            addAction(ACTION_STOP)
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(commandReceiver, filter, RECEIVER_EXPORTED)
-        } else {
-            registerReceiver(commandReceiver, filter)
-        }
-    }
 
     private fun startProjection(resultCode: Int, data: Intent) {
         val projectionManager =
@@ -212,11 +244,10 @@ class CaptureService : Service() {
     }
 
     private fun sendBoxesToOverlay(boxes: ConcurrentHashMap<Int, BoxData>) {
-        val intent = Intent(OverlayService.ACTION_UPDATE_BOXES).apply {
-            `package` = packageName
-            putParcelableArrayListExtra(OverlayService.EXTRA_BOXES, ArrayList(boxes.values.toList()))
+        val overlayBoxes = boxes.values.map {
+            OverlayView.Box(android.graphics.Rect(it.left, it.top, it.right, it.bottom), it.text)
         }
-        sendBroadcast(intent)
+        handler?.post { boxesView?.updateBoxes(overlayBoxes) }
     }
 
     private fun imageToBitmap(image: Image): Bitmap? {
@@ -262,8 +293,5 @@ class CaptureService : Service() {
         private const val CHANNEL_ID = "capture_service"
         const val EXTRA_RESULT_CODE = "resultCode"
         const val EXTRA_RESULT_DATA = "resultData"
-        const val ACTION_PLAY_PAUSE = "com.example.screentranslator.PLAY_PAUSE"
-        const val ACTION_STOP = "com.example.screentranslator.STOP"
-        const val EXTRA_IS_PLAYING = "isPlaying"
     }
 }
